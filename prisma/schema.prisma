@@ -1,0 +1,429 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  password    String
+  role        String   @default("admin")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+  auditLogs   AuditLog[]
+}
+
+model CompanySettings {
+  id                    String   @id @default("default")
+  businessName          String   @default("My Business")
+  tradingName           String?
+  email                 String?
+  phone                 String?
+  addressLine1          String?
+  addressLine2          String?
+  city                  String?
+  county                String?
+  postcode              String?
+  country               String   @default("United Kingdom")
+  website               String?
+  companyNumber         String?
+  vatNumber             String?
+  logoUrl               String?
+  invoicePrefix         String   @default("INV")
+  nextInvoiceNumber     Int      @default(1)
+  defaultPaymentTerms   Int      @default(30)
+  defaultInvoiceNotes   String?
+  bankName              String?
+  bankAccountName       String?
+  bankAccountNumber     String?
+  bankSortCode          String?
+  paymentInstructions   String?
+  vatRegistered         Boolean  @default(false)
+  defaultVatRate        Float    @default(20)
+  vatScheme             String   @default("standard")
+  vatFlatRatePercent    Float    @default(0)
+  financialYearEnd      Int      @default(3)
+  emailFromName         String   @default("My Business")
+  emailFromAddress      String?
+  emailSubjectTemplate  String   @default("Invoice {{invoiceNumber}} from {{businessName}}")
+  emailBodyTemplate     String   @default("Dear {{clientName}},\n\nPlease find attached invoice {{invoiceNumber}} for {{amount}}.\n\nPayment is due by {{dueDate}}.\n\nThank you for your business.")
+  emailProvider         String   @default("mock")
+  selfAssessmentEnabled Boolean  @default(false)
+  corporationTaxEnabled Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model Client {
+  id                  String             @id @default(cuid())
+  name                String
+  companyName         String?
+  email               String?
+  phone               String?
+  addressLine1        String?
+  addressLine2        String?
+  city                String?
+  county              String?
+  postcode            String?
+  country             String             @default("United Kingdom")
+  contactName         String?
+  notes               String?
+  vatNumber           String?
+  paymentTerms        Int                @default(30)
+  defaultInvoiceNotes String?
+  isArchived          Boolean            @default(false)
+  archivedAt          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  invoices            Invoice[]
+  quotes              Quote[]
+  expenses            Expense[]
+  payments            Payment[]
+  creditNotes         CreditNote[]
+  recurringInvoices   RecurringInvoice[]
+
+  @@index([name])
+  @@index([isArchived])
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique
+  clientId      String
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  status        String        @default("draft")
+  issueDate     DateTime      @default(now())
+  dueDate       DateTime
+  paymentTerms  Int           @default(30)
+  subtotal      Int           @default(0)
+  vatTotal      Int           @default(0)
+  discountTotal Int           @default(0)
+  total         Int           @default(0)
+  amountPaid    Int           @default(0)
+  balanceDue    Int           @default(0)
+  notes         String?
+  internalNotes String?
+  vatEnabled    Boolean       @default(true)
+  sentAt        DateTime?
+  viewedAt      DateTime?
+  paidAt        DateTime?
+  cancelledAt   DateTime?
+  writtenOffAt  DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  items         InvoiceItem[]
+  payments      Payment[]
+  creditNotes   CreditNote[]
+  emailLogs     EmailLog[]
+  auditLogs     AuditLog[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([dueDate])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Int      @default(0)
+  vatRate     Float    @default(20)
+  discount    Int      @default(0)
+  lineTotal   Int      @default(0)
+  vatAmount   Int      @default(0)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  invoiceId String?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  amount    Int      @default(0)
+  date      DateTime @default(now())
+  method    String   @default("bank_transfer")
+  reference String?
+  notes     String?
+  isRefund  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([invoiceId])
+  @@index([clientId])
+  @@index([date])
+}
+
+model ExpenseCategory {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  color       String    @default("#6B7280")
+  isArchived  Boolean   @default(false)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  expenses    Expense[]
+}
+
+model Expense {
+  id                String          @id @default(cuid())
+  categoryId        String
+  category          ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  clientId          String?
+  client            Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  date              DateTime        @default(now())
+  supplier          String?
+  description       String
+  netAmount         Int             @default(0)
+  vatAmount         Int             @default(0)
+  grossAmount       Int             @default(0)
+  vatRate           Float           @default(20)
+  paymentMethod     String          @default("bank_transfer")
+  reference         String?
+  receiptUrl        String?
+  isReimbursable    Boolean         @default(false)
+  isBillable        Boolean         @default(false)
+  invoiceId         String?
+  notes             String?
+  isArchived        Boolean         @default(false)
+  bankTransactionId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([categoryId])
+  @@index([clientId])
+  @@index([date])
+}
+
+model MileageExpense {
+  id             String   @id @default(cuid())
+  date           DateTime @default(now())
+  description    String
+  startLocation  String?
+  endLocation    String?
+  miles          Float    @default(0)
+  ratePerMile    Float    @default(0.45)
+  amount         Int      @default(0)
+  vehicleReg     String?
+  isReimbursable Boolean  @default(false)
+  isBillable     Boolean  @default(false)
+  clientId       String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([date])
+}
+
+model Quote {
+  id                   String      @id @default(cuid())
+  quoteNumber          String      @unique
+  clientId             String
+  client               Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  status               String      @default("draft")
+  issueDate            DateTime    @default(now())
+  expiryDate           DateTime
+  subtotal             Int         @default(0)
+  vatTotal             Int         @default(0)
+  discountTotal        Int         @default(0)
+  total                Int         @default(0)
+  notes                String?
+  internalNotes        String?
+  convertedToInvoiceId String?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  items                QuoteItem[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+model QuoteItem {
+  id          String   @id @default(cuid())
+  quoteId     String
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Int      @default(0)
+  vatRate     Float    @default(20)
+  discount    Int      @default(0)
+  lineTotal   Int      @default(0)
+  vatAmount   Int      @default(0)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([quoteId])
+}
+
+model CreditNote {
+  id               String   @id @default(cuid())
+  creditNoteNumber String   @unique
+  invoiceId        String
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  issueDate        DateTime @default(now())
+  reason           String?
+  subtotal         Int      @default(0)
+  vatTotal         Int      @default(0)
+  total            Int      @default(0)
+  amountApplied    Int      @default(0)
+  remaining        Int      @default(0)
+  status           String   @default("open")
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([invoiceId])
+  @@index([clientId])
+}
+
+model RecurringInvoice {
+  id             String                   @id @default(cuid())
+  templateName   String
+  clientId       String
+  client         Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  frequency      String                   @default("monthly")
+  startDate      DateTime
+  endDate        DateTime?
+  lastIssuedDate DateTime?
+  nextIssueDate  DateTime?
+  dayOfMonth     Int                      @default(1)
+  isActive       Boolean                  @default(true)
+  subtotal       Int                      @default(0)
+  vatTotal       Int                      @default(0)
+  total          Int                      @default(0)
+  notes          String?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  items          RecurringInvoiceItem[]
+
+  @@index([clientId])
+  @@index([isActive])
+}
+
+model RecurringInvoiceItem {
+  id                 String           @id @default(cuid())
+  recurringInvoiceId String
+  recurringInvoice   RecurringInvoice @relation(fields: [recurringInvoiceId], references: [id], onDelete: Cascade)
+  description        String
+  quantity           Float            @default(1)
+  unitPrice          Int              @default(0)
+  vatRate            Float            @default(20)
+  sortOrder          Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([recurringInvoiceId])
+}
+
+model BankImport {
+  id             String            @id @default(cuid())
+  fileName       String
+  importDate     DateTime          @default(now())
+  rowCount       Int               @default(0)
+  matchedCount   Int               @default(0)
+  ignoredCount   Int               @default(0)
+  duplicateCount Int               @default(0)
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  transactions   BankTransaction[]
+}
+
+model BankTransaction {
+  id           String     @id @default(cuid())
+  bankImportId String
+  bankImport   BankImport @relation(fields: [bankImportId], references: [id], onDelete: Cascade)
+  date         DateTime
+  description  String
+  reference    String?
+  amount       Int        @default(0)
+  balance      Int?
+  type         String     @default("unknown")
+  status       String     @default("pending")
+  categoryId   String?
+  expenseId    String?
+  matchedAt    DateTime?
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([bankImportId])
+  @@index([date])
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  details    String?
+  ipAddress  String?
+  userAgent  String?
+  invoiceId  String?
+  invoice    Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  invoiceId   String?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  clientId    String?
+  toAddress   String
+  fromAddress String
+  subject     String
+  body        String?
+  status      String   @default("pending")
+  error       String?
+  sentAt      DateTime?
+  provider    String   @default("mock")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([invoiceId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ReminderLog {
+  id           String   @id @default(cuid())
+  invoiceId    String
+  reminderType String   @default("due_soon")
+  sentAt       DateTime @default(now())
+  toAddress    String
+  status       String   @default("sent")
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([sentAt])
+}

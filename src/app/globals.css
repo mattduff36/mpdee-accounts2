@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+  html { @apply scroll-smooth; }
+  body {
+    @apply bg-slate-50 text-slate-950 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  ::selection { @apply bg-blue-600 text-white; }
+}
+
+@layer components {
+  main table { @apply border-separate border-spacing-0; }
+  main th { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
+  main tbody tr { @apply transition-colors; }
+  main a { @apply underline-offset-4; }
+}
+
+main .rounded-lg.border.bg-white:not(.bg-blue-50) {
+  @apply rounded-2xl border-slate-200/80 bg-white/95 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.45)];
+}
+
+main .rounded-lg.border.bg-white:has(table) {
+  @apply overflow-x-auto;
+}
+
+main input:not([type="checkbox"]):not([type="hidden"]):not([type="file"]),
+main select,
+main textarea {
+  @apply rounded-xl border-slate-200 bg-white/90 text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20;
+}
+
+main label {
+  @apply text-slate-700;
+}

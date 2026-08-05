@@ -1,0 +1,14 @@
+/node_modules
+/.next
+/out
+/build
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.log
+/public/uploads/
+/backups/
+.DS_Store
+.vercel
