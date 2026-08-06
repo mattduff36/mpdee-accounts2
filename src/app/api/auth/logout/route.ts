@@ -3,5 +3,5 @@ import { cookies } from "next/headers"
 export async function POST() {
   const cookieStore = await cookies()
   cookieStore.delete("session")
-  return NextResponse.redirect(new URL("/login", process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"))
+  return NextResponse.redirect(new URL("/login", process.env.NEXT_PUBLIC_APP_URL || "http://localhost:4000"))
 }

@@ -134,19 +134,21 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id          String   @id @default(cuid())
-  invoiceId   String
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  description String
-  quantity    Float    @default(1)
-  unitPrice   Int      @default(0)
-  vatRate     Float    @default(20)
-  discount    Int      @default(0)
-  lineTotal   Int      @default(0)
-  vatAmount   Int      @default(0)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(cuid())
+  invoiceId        String
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description      String
+  quantity         Float    @default(1)
+  unitPrice        Int      @default(0)
+  vatRate          Float    @default(20)
+  discount         Int      @default(0)
+  lineTotal        Int      @default(0)
+  vatAmount        Int      @default(0)
+  agencyCommission Float    @default(0)
+  businessArea     String   @default("CREATIVE")
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([invoiceId])
 }

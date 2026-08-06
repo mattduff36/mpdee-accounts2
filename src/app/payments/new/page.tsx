@@ -18,7 +18,23 @@ export default async function NewPaymentPage({ searchParams }: { searchParams: P
     await prisma.payment.create({ data: { invoiceId, clientId: invoice.clientId, amount, date: new Date(String(formData.get("date"))), method: String(formData.get("method")), reference: String(formData.get("reference") || ""), notes: String(formData.get("notes") || "") } })
     const newPaid = invoice.amountPaid + amount
     const newStatus = newPaid >= invoice.total ? "paid" : "partial"
-    await prisma.invoice.update({ where: { id: invoiceId }, data: { amountPaid: newPaid, balanceDue: Math.max(0, invoice.total - newPaid), status: newStatus, paidAt: newPaid >= invoice.total ? new Date() : invoice.paidAt } })
+    await prisma.invoice.update({
+      where: { id: invoiceId },
+      data: {
+        amountPaid: newPaid,
+        balanceDue: Math.max(0, invoice.total - newPaid),
+        status: newStatus,
+        paidAt: newPaid >= invoice.total ? new Date() : invoice.paidAt,
+      },
+    })
+    if (newStatus === "paid") {
+      try {
+        const { sendPaymentReceivedEmail } = await import("@/lib/email")
+        await sendPaymentReceivedEmail(invoiceId)
+      } catch {
+        // Payment already saved; email failure must not roll back
+      }
+    }
     redirect("/payments")
   }
   return <div className="space-y-6 max-w-xl">

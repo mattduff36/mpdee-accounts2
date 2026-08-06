@@ -164,6 +164,16 @@ function getRawTransactionNote(transaction: LegacyBankTransaction): string {
   return notes.join("\n")
 }
 
+function cleanLegacyDescription(description: string): string {
+  return description.replace(/\s*\(Legacy area:\s*[^)]+\)\s*/gi, "").trim()
+}
+
+function normalizeBusinessArea(area: string | null | undefined): string {
+  const value = (area || "CREATIVE").toUpperCase()
+  if (value === "DEVELOPMENT" || value === "SUPPORT" || value === "CREATIVE") return value
+  return "CREATIVE"
+}
+
 function getCompanySettingsData() {
   const businessName = process.env.COMPANY_NAME || "My Business"
   const companyEmail = process.env.COMPANY_EMAIL || process.env.EMAIL_FROM || undefined
@@ -175,12 +185,17 @@ function getCompanySettingsData() {
     tradingName: businessName,
     email: companyEmail,
     phone: process.env.COMPANY_PHONE || undefined,
-    addressLine1: process.env.COMPANY_ADDRESS || undefined,
+    addressLine1: process.env.COMPANY_ADDRESS || "6 Brocklehurst Drive, Edwinstowe, Mansfield, Notts. NG21 9JW",
     country: "United Kingdom",
-    invoicePrefix: process.env.INVOICE_PREFIX || "INV",
+    invoicePrefix: process.env.INVOICE_PREFIX || "MPD",
     defaultPaymentTerms: DEFAULT_PAYMENT_TERMS,
     vatRegistered: false,
     defaultVatRate: 20,
+    bankName: "Monzo Bank Ltd",
+    bankAccountName: "Matthew Duffill trading as MPDEE Group",
+    bankAccountNumber: "88760521",
+    bankSortCode: "04-00-05",
+    paymentInstructions: "Please pay by bank transfer using the details on the invoice.",
     emailFromName,
     emailFromAddress,
     emailProvider: process.env.EMAIL_PROVIDER || "mock",
@@ -340,15 +355,16 @@ async function importInvoices(prisma: PrismaClient, data: LegacyData, clientIdMa
     const itemData = legacyItems.map((item, sortOrder) => {
       const unitPrice = poundsToPence(item.rate ?? item.unit_price)
       const lineTotal = poundsToPence(item.total ?? item.total_price)
-      const description = item.business_area ? `${item.description} (Legacy area: ${item.business_area.toLowerCase()})` : item.description
 
       return {
-        description,
+        description: cleanLegacyDescription(item.description),
         quantity: item.quantity,
         unitPrice,
         vatRate: 0,
         lineTotal,
         vatAmount: 0,
+        agencyCommission: item.agency_commission || 0,
+        businessArea: normalizeBusinessArea(item.business_area),
         sortOrder,
         createdAt: item.created_at,
         updatedAt: item.updated_at,

@@ -12,18 +12,32 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   const q = quote!
   async function convertToInvoice() {
     "use server"
+    const { createInvoiceWithAllocatedNumber } = await import("@/lib/invoice-number")
     const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
-    const prefix = settings?.invoicePrefix || "INV"
-    const nextNum = settings?.nextInvoiceNumber || 1
-    const invoiceNumber = `${prefix}-${String(nextNum).padStart(4, "0")}`
-    const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30)
-    const invoice = await prisma.invoice.create({ data: {
-      invoiceNumber, clientId: q.clientId, status: "draft", issueDate: new Date(), dueDate,
-      subtotal: q.subtotal, vatTotal: q.vatTotal, total: q.total, balanceDue: q.total,
-      items: { create: q.items.map((item, i) => ({ description: item.description, quantity: item.quantity, unitPrice: item.unitPrice, lineTotal: item.lineTotal, sortOrder: i })) }
-    }})
+    const prefix = settings?.invoicePrefix || process.env.INVOICE_PREFIX || "MPD"
+    const dueDate = new Date()
+    dueDate.setDate(dueDate.getDate() + 30)
+    const invoice = await createInvoiceWithAllocatedNumber(prefix, {
+      client: { connect: { id: q.clientId } },
+      status: "draft",
+      issueDate: new Date(),
+      dueDate,
+      subtotal: q.subtotal,
+      vatTotal: q.vatTotal,
+      total: q.total,
+      balanceDue: q.total,
+      vatEnabled: false,
+      items: {
+        create: q.items.map((item, i) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          lineTotal: item.lineTotal,
+          sortOrder: i,
+        })),
+      },
+    })
     await prisma.quote.update({ where: { id }, data: { status: "converted", convertedToInvoiceId: invoice.id } })
-    await prisma.companySettings.update({ where: { id: "default" }, data: { nextInvoiceNumber: nextNum + 1 } })
     redirect(`/invoices/${invoice.id}`)
   }
   return <div className="space-y-6 max-w-4xl">

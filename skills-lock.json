@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "email-html-mjml": {
+      "source": "framix-team/skill-email-html-mjml",
+      "sourceType": "github",
+      "skillPath": "email-html-mjml/SKILL.md",
+      "computedHash": "240057f0e72171562eb98f8b7762c16d86b6094cfff5ae91cfb1754a711d1ced"
+    }
+  }
+}
