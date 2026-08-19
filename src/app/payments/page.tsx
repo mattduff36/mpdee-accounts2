@@ -1,8 +1,6 @@
 import { prisma } from "@/lib/db"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
-import { StatusBadge } from "@/components/StatusBadge"
 import Link from "next/link"
 
 async function getPayments() { return prisma.payment.findMany({ orderBy: { date: "desc" }, include: { invoice: { select: { invoiceNumber: true, id: true } }, client: { select: { name: true } } } }) }
@@ -10,7 +8,7 @@ async function getPayments() { return prisma.payment.findMany({ orderBy: { date:
 export default async function PaymentsPage() {
   const payments = await getPayments()
   return <div className="space-y-4">
-    <PageHeader title="Payments" description="Track and manage payments"><Link href="/payments/new"><Button>Record Payment</Button></Link></PageHeader>
+    <PageHeader title="Payments" description="Track and manage payments" />
     <div className="rounded-lg border bg-white">
       <table className="w-full text-sm"><thead><tr className="border-b bg-gray-50">
         <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>

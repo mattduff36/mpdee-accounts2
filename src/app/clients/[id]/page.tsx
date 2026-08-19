@@ -1,12 +1,11 @@
 import { prisma } from "@/lib/db"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/StatusBadge"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import Link from "next/link"
 import { notFound } from "next/navigation"
-import { FileText, Mail, Phone, MapPin } from "lucide-react"
+import { FileText, Mail, Phone, MapPin, Pencil } from "lucide-react"
+import { IconAction } from "@/components/IconAction"
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -17,7 +16,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const outstanding = client.invoices.filter(i => ["sent", "viewed", "partial", "overdue"].includes(i.status)).reduce((s, i) => s + i.balanceDue, 0)
   return <div className="space-y-6">
     <PageHeader title={client.name} description={client.companyName || undefined}>
-      <Link href={`/clients/${id}/edit`}><Button variant="secondary">Edit Client</Button></Link>
+      <IconAction title="Edit Client" icon={Pencil} href={`/clients/${id}/edit`} />
     </PageHeader>
     <div className="grid gap-4 md:grid-cols-3">
       <Card><CardContent className="pt-6"><p className="text-sm text-gray-500">Total Invoiced</p><p className="text-2xl font-bold">{formatCurrency(totalInvoiced)}</p></CardContent></Card>

@@ -2,18 +2,15 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
+import { Send } from "lucide-react"
+import { IconAction } from "./IconAction"
 
 export function SendInvoiceButton({
   invoiceId,
-  label = "Send",
-  variant = "primary",
-  size = "sm",
+  mode = "send",
 }: {
   invoiceId: string
-  label?: string
-  variant?: "primary" | "secondary" | "ghost" | "danger" | "outline"
-  size?: "sm" | "md" | "lg"
+  mode?: "send" | "resend"
 }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -39,9 +36,14 @@ export function SendInvoiceButton({
 
   return (
     <span className="inline-flex flex-col items-end gap-1">
-      <Button type="button" variant={variant} size={size} disabled={loading} onClick={handleSend}>
-        {loading ? "Sending..." : label}
-      </Button>
+      <IconAction
+        title={mode === "resend" ? "Resend Invoice" : "Send Invoice"}
+        icon={Send}
+        tone={mode === "resend" ? "blue" : "green"}
+        loading={loading}
+        disabled={loading}
+        onClick={handleSend}
+      />
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>
   )

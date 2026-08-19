@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/StatusBadge"
+import { IconAction } from "@/components/IconAction"
+import { FileInput, Send } from "lucide-react"
 import { notFound, redirect } from "next/navigation"
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,8 +43,8 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   }
   return <div className="space-y-6 max-w-4xl">
     <PageHeader title={`Quote ${quote.quoteNumber}`}>
-      {quote.status === "draft" && <form action={async () => { "use server"; await prisma.quote.update({ where: { id }, data: { status: "sent" } }) }}><Button type="submit" size="sm">Mark as Sent</Button></form>}
-      {quote.status !== "converted" && <form action={convertToInvoice}><Button type="submit" size="sm">Convert to Invoice</Button></form>}
+      {quote.status === "draft" && <form action={async () => { "use server"; await prisma.quote.update({ where: { id }, data: { status: "sent" } }) }}><IconAction title="Mark as Sent" icon={Send} tone="green" type="submit" /></form>}
+      {quote.status !== "converted" && <form action={convertToInvoice}><IconAction title="Convert to Invoice" icon={FileInput} tone="blue" type="submit" /></form>}
     </PageHeader>
     <div className="grid gap-4 md:grid-cols-3">
       <div className="rounded-lg border bg-white p-4"><p className="text-sm text-gray-500">Total</p><p className="text-2xl font-bold">{formatCurrency(q.total)}</p></div>

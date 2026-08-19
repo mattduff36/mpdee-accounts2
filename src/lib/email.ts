@@ -204,7 +204,10 @@ export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean
   return { ok: true }
 }
 
-export async function sendPaymentReceivedEmail(invoiceId: string): Promise<{ ok: boolean; error?: string }> {
+export async function sendPaymentReceivedEmail(
+  invoiceId: string,
+  options?: { amountPaidPence?: number }
+): Promise<{ ok: boolean; error?: string }> {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
@@ -214,7 +217,7 @@ export async function sendPaymentReceivedEmail(invoiceId: string): Promise<{ ok:
 
   const rendered = renderPaymentReceivedEmail({
     invoiceNumber: invoice.invoiceNumber,
-    total: invoice.total,
+    total: options?.amountPaidPence ?? invoice.total,
     clientName: invoice.client.name,
     paidAt: invoice.paidAt || new Date(),
     items: invoice.items,

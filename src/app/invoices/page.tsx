@@ -1,9 +1,13 @@
 import { prisma } from "@/lib/db"
 import { formatCurrency, formatDate } from "@/lib/format"
+import { invoiceSendMode, isEligibleMarkPaidStatus } from "@/lib/payments"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/StatusBadge"
+import { IconAction } from "@/components/IconAction"
+import { MarkAsPaidButton } from "@/components/MarkAsPaidButton"
 import { SendInvoiceButton } from "@/components/SendInvoiceButton"
+import { Download, Eye } from "lucide-react"
 import Link from "next/link"
 
 async function getInvoices(status?: string, search?: string) {
@@ -75,7 +79,9 @@ export default async function InvoicesPage({
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => (
+            {invoices.map((inv) => {
+              const sendMode = invoiceSendMode(inv.status)
+              return (
               <tr key={inv.id} className="border-b hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium">
                   <Link href={`/invoices/${inv.id}`} className="text-blue-600 hover:underline">
@@ -89,27 +95,17 @@ export default async function InvoicesPage({
                 <td className="px-4 py-3">
                   <StatusBadge status={inv.status} />
                 </td>
-                <td className="px-4 py-3 text-right space-x-1">
-                  {(inv.status === "draft" || inv.status === "sent") && (
-                    <SendInvoiceButton
-                      invoiceId={inv.id}
-                      label={inv.status === "sent" ? "Resend" : "Send"}
-                      variant="ghost"
-                    />
-                  )}
-                  <a href={`/api/invoices/${inv.id}/pdf`}>
-                    <Button variant="ghost" size="sm">
-                      PDF
-                    </Button>
-                  </a>
-                  <Link href={`/invoices/${inv.id}`}>
-                    <Button variant="ghost" size="sm">
-                      View
-                    </Button>
-                  </Link>
+                <td className="px-4 py-3 text-right">
+                  <div className="inline-flex items-center justify-end gap-1">
+                    {sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
+                    {isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
+                    <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${inv.id}/pdf`} external />
+                    <IconAction title="View Invoice" icon={Eye} href={`/invoices/${inv.id}`} />
+                  </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
         {invoices.length === 0 && (

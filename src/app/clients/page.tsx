@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/db"
-import { formatCurrency, formatDate } from "@/lib/format"
+import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/StatusBadge"
 import Link from "next/link"
-import { Search } from "lucide-react"
-import { revalidatePath } from "next/cache"
+import { Search, Pencil } from "lucide-react"
+import { IconAction } from "@/components/IconAction"
 
 async function getClients(search?: string, status?: string) {
   const where: any = {}
@@ -44,7 +44,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
           <td className="px-4 py-3 text-gray-500">{client.email || "-"}</td>
           <td className="px-4 py-3 text-right font-medium">{formatCurrency(client.outstandingBalance)}</td>
           <td className="px-4 py-3">{client.isArchived ? <StatusBadge status="cancelled" /> : <StatusBadge status="paid" />}</td>
-          <td className="px-4 py-3 text-right"><Link href={`/clients/${client.id}/edit`}><Button variant="ghost" size="sm">Edit</Button></Link></td>
+          <td className="px-4 py-3 text-right"><IconAction title="Edit Client" icon={Pencil} href={`/clients/${client.id}/edit`} /></td>
         </tr>)}</tbody>
       </table>
       {clients.length === 0 && <div className="py-8 text-center text-sm text-gray-500">No clients found</div>}

@@ -1,5 +1,7 @@
 export const INVOICE_STATUSES = ['draft','sent','viewed','partial','paid','overdue','cancelled','written_off'] as const
 export const PAYMENT_METHODS = ['bank_transfer','cash','card','cheque','paypal','stripe','other'] as const
+export const DEFAULT_PAYMENT_METHOD = PAYMENT_METHODS[0]
+export const MARK_PAID_ELIGIBLE_STATUSES = ['sent', 'viewed', 'partial', 'overdue'] as const
 export const EXPENSE_PAYMENT_METHODS = ['bank_transfer','cash','card','cheque','paypal','credit_card','other'] as const
 export const VAT_RATES = [{ label: 'Standard 20%', value: 20 }, { label: 'Reduced 5%', value: 5 }, { label: 'Zero 0%', value: 0 }, { label: 'Exempt', value: -1 }] as const
 export const QUOTE_STATUSES = ['draft','sent','accepted','rejected','converted','expired'] as const

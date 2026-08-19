@@ -1,11 +1,13 @@
 import { prisma } from "@/lib/db"
 import { formatCurrency, formatDate, daysOverdue } from "@/lib/format"
+import { invoiceSendMode, isEligibleMarkPaidStatus } from "@/lib/payments"
 import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/StatusBadge"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { IconAction } from "@/components/IconAction"
+import { MarkAsPaidButton } from "@/components/MarkAsPaidButton"
 import { SendInvoiceButton } from "@/components/SendInvoiceButton"
-import Link from "next/link"
+import { Download } from "lucide-react"
 import { notFound } from "next/navigation"
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -15,26 +17,14 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     include: { client: true, items: { orderBy: { sortOrder: "asc" } }, payments: { orderBy: { date: "desc" } } },
   })
   if (!invoice) notFound()
+  const sendMode = invoiceSendMode(invoice.status)
   return (
     <div className="space-y-6 max-w-4xl">
       <PageHeader title={`Invoice ${invoice.invoiceNumber}`}>
-        <div className="flex gap-2 flex-wrap">
-          {(invoice.status === "draft" || invoice.status === "sent") && (
-            <SendInvoiceButton
-              invoiceId={id}
-              label={invoice.status === "sent" ? "Resend Invoice" : "Send Invoice"}
-            />
-          )}
-          {invoice.status !== "draft" && invoice.status !== "paid" && (
-            <Link href={`/payments/new?invoiceId=${id}`}>
-              <Button size="sm">Record Payment</Button>
-            </Link>
-          )}
-          <a href={`/api/invoices/${id}/pdf`}>
-            <Button variant="secondary" size="sm">
-              Download PDF
-            </Button>
-          </a>
+        <div className="flex gap-1 flex-wrap">
+          {sendMode && <SendInvoiceButton invoiceId={id} mode={sendMode} />}
+          {isEligibleMarkPaidStatus(invoice.status) && <MarkAsPaidButton invoiceId={id} />}
+          <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${id}/pdf`} external />
         </div>
       </PageHeader>
       <div className="grid gap-4 md:grid-cols-3">
