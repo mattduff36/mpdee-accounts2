@@ -352,3 +352,23 @@ test("INV-EDIT-011: item-create or invoice-update failure restores the complete 
   assert.equal(updateFail.state.invoice?.total, 1000)
   assert.equal(updateFail.state.items[0]?.description, "Old line")
 })
+
+test("draft client can change and credit rates reduce the total", async () => {
+  const { db, state } = createDb(draftInvoice(), { clients: ["cli_1", "cli_2"] })
+  const result = await updateDraftInvoice(
+    "inv_1",
+    validInput({
+      clientId: "cli_2",
+      descriptions: ["Development Session", "Credit"],
+      quantities: ["3", "1"],
+      unitPrices: ["28.00", "-100.00"],
+      commissions: ["0", "0"],
+      areas: ["DEVELOPMENT", "DEVELOPMENT"],
+    }),
+    { db },
+  )
+  assert.equal(state.invoice?.clientId, "cli_2")
+  assert.equal(result.total, 8400 - 10000)
+  assert.equal(state.items[1]?.unitPrice, -10000)
+  assert.equal(state.items[1]?.lineTotal, -10000)
+})

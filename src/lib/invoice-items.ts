@@ -1,6 +1,7 @@
 import { parseCurrency } from "./format"
 
 export const PG_INT_MAX = 2_147_483_647
+export const PG_INT_MIN = -2_147_483_648
 export const MAX_LINE_QUANTITY = 1_000_000
 export const BUSINESS_AREA_VALUES = ["CREATIVE", "DEVELOPMENT", "SUPPORT"] as const
 
@@ -22,12 +23,12 @@ export type BuiltInvoiceItem = {
 export function calculateInvoiceDraftLine(quantity: number, unitPricePence: number, commissionPercent: number) {
   const gross = Math.round(quantity * unitPricePence)
   const commissionAmount = commissionPercent > 0 ? Math.round(gross * (commissionPercent / 100)) : 0
-  const lineTotal = Math.max(0, gross - commissionAmount)
+  const lineTotal = gross - commissionAmount
   return { gross, commissionAmount, lineTotal, vatAmount: 0 }
 }
 
 function assertSafePence(value: number, label: string) {
-  if (!Number.isInteger(value) || value < 0 || value > PG_INT_MAX) {
+  if (!Number.isInteger(value) || value < PG_INT_MIN || value > PG_INT_MAX) {
     throw new Error(`Invalid ${label}`)
   }
 }
@@ -62,7 +63,7 @@ function parseUnitPricePence(value: string): number {
     throw new Error("Invalid rate")
   }
   const pounds = Number(cleaned)
-  if (!Number.isFinite(pounds) || pounds < 0) {
+  if (!Number.isFinite(pounds)) {
     throw new Error("Invalid rate")
   }
   const pence = parseCurrency(value)
