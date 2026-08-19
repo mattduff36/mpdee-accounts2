@@ -5,7 +5,10 @@ import {
   formatDatabaseTargetIdentity,
   interpretMigrateDiffExit,
   isLocalDatabaseHost,
+  isMigrateAdvisoryLockTimeout,
+  neonUnpooledHostname,
   parseDatabaseTargetIdentity,
+  resolveMigrateDatabaseUrl,
   sanitizeDatabaseOutput,
 } from "./database-target"
 
@@ -47,6 +50,28 @@ test("GUARD-001: sanitizes connection strings in process output", () => {
   assert.equal(sanitized.includes("secret"), false)
   assert.equal(sanitized.includes("postgresql://"), false)
   assert.equal(sanitized.includes("[redacted]"), true)
+})
+
+test("DEPLOY-002: Neon pooler host is rewritten for migrate; DIRECT_URL wins", () => {
+  assert.equal(
+    neonUnpooledHostname("ep-example-pooler.c-2.eu-west-2.aws.neon.tech"),
+    "ep-example.c-2.eu-west-2.aws.neon.tech",
+  )
+  const fromPooler = resolveMigrateDatabaseUrl({
+    DATABASE_URL: "postgresql://user:secret@ep-example-pooler.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require&pgbouncer=true",
+  })
+  assert.equal(fromPooler?.includes("-pooler"), false)
+  assert.equal(fromPooler?.includes("pgbouncer"), false)
+  assert.equal(fromPooler?.includes("secret"), true)
+  assert.equal(
+    resolveMigrateDatabaseUrl({
+      DIRECT_URL: "postgresql://user:secret@ep-example.eu-west-2.aws.neon.tech/neondb",
+      DATABASE_URL: "postgresql://user:secret@ep-example-pooler.c-2.eu-west-2.aws.neon.tech/neondb",
+    }),
+    "postgresql://user:secret@ep-example.eu-west-2.aws.neon.tech/neondb",
+  )
+  assert.equal(isMigrateAdvisoryLockTimeout("Error: P1002\nTimed out trying to acquire a postgres advisory lock"), true)
+  assert.equal(isMigrateAdvisoryLockTimeout("Migration applied"), false)
 })
 
 test("MIG-004: migrate diff exit 2 is drift and must not be adopted", () => {

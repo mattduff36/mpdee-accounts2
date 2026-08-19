@@ -36,6 +36,15 @@ test("DEPLOY-001: Vercel production buildCommand is build:vercel; drift argv has
   assert.equal(DRIFT_DIFF_ARGS.some((arg) => arg.includes("://")), false)
 })
 
+function testEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    DIRECT_URL: "",
+    DATABASE_URL_UNPOOLED: "",
+    ...overrides,
+  }
+}
+
 test("DEPLOY-001: production invokes prisma migrate deploy exactly once; preview does not spawn", () => {
   const calls: { args: readonly string[]; envUrl: string | undefined }[] = []
   const spawn: SpawnFn = (_command, args, options) => {
@@ -44,12 +53,11 @@ test("DEPLOY-001: production invokes prisma migrate deploy exactly once; preview
   }
 
   const preview = runProductionMigrateDeploy(
-    {
-      ...process.env,
+    testEnv({
       VERCEL_ENV: "preview",
       ALLOW_PRODUCTION_MIGRATE: "1",
       DATABASE_URL: "postgresql://user:secret@localhost:5432/app",
-    },
+    }),
     spawn
   )
   assert.equal(preview.action, "skip")
@@ -57,11 +65,11 @@ test("DEPLOY-001: production invokes prisma migrate deploy exactly once; preview
   assert.equal(calls.length, 0)
 
   const production = runProductionMigrateDeploy(
-    {
-      ...process.env,
+    testEnv({
       VERCEL_ENV: "production",
       DATABASE_URL: "postgresql://user:secret@localhost:5432/app",
-    },
+      PRISMA_MIGRATE_LOCK_RETRY_MS: "0",
+    }),
     spawn
   )
   assert.equal(production.action, "migrate")
@@ -70,4 +78,31 @@ test("DEPLOY-001: production invokes prisma migrate deploy exactly once; preview
   assert.deepEqual([...calls[0]!.args], [...PRISMA_MIGRATE_DEPLOY_ARGS])
   assert.equal(calls[0]!.args.some((arg) => arg.includes("://")), false)
   assert.equal(calls[0]!.envUrl, "postgresql://user:secret@localhost:5432/app")
+})
+
+test("DEPLOY-002: production migrate uses unpooled Neon host and retries advisory lock timeout", () => {
+  const calls: string[] = []
+  let attempt = 0
+  const spawn: SpawnFn = (_command, _args, options) => {
+    calls.push(options.env?.DATABASE_URL ?? "")
+    attempt += 1
+    if (attempt === 1) {
+      return { status: 1, stdout: "", stderr: "Error: P1002 Timed out trying to acquire a postgres advisory lock" }
+    }
+    return { status: 0, stdout: "", stderr: "" }
+  }
+
+  const result = runProductionMigrateDeploy(
+    testEnv({
+      VERCEL_ENV: "production",
+      DATABASE_URL: "postgresql://user:secret@ep-example-pooler.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require",
+      PRISMA_MIGRATE_LOCK_RETRY_MS: "0",
+    }),
+    spawn,
+  )
+  assert.equal(result.action, "migrate")
+  assert.equal(result.spawnCount, 2)
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0], "postgresql://user:secret@ep-example.c-2.eu-west-2.aws.neon.tech/neondb?sslmode=require")
+  assert.equal(calls[0]?.includes("-pooler"), false)
 })

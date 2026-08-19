@@ -38,6 +38,40 @@ export function sanitizeDatabaseOutput(text: string): string {
   return text.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, "[redacted]")
 }
 
+export function neonUnpooledHostname(host: string): string {
+  return host.replace(/-pooler(?=\.)/i, "")
+}
+
+export function resolveMigrateDatabaseUrl(env: {
+  DIRECT_URL?: string
+  DATABASE_URL_UNPOOLED?: string
+  DATABASE_URL?: string
+}): string | undefined {
+  const explicit = [env.DIRECT_URL, env.DATABASE_URL_UNPOOLED].find((value) => value && value.length > 0)
+  if (explicit) return explicit
+  const url = env.DATABASE_URL
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    const unpooledHost = neonUnpooledHostname(parsed.hostname)
+    const hadPgbouncer = parsed.searchParams.has("pgbouncer")
+    if (unpooledHost === parsed.hostname && !hadPgbouncer) {
+      return url
+    }
+    if (unpooledHost !== parsed.hostname) {
+      parsed.hostname = unpooledHost
+    }
+    parsed.searchParams.delete("pgbouncer")
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+export function isMigrateAdvisoryLockTimeout(output: string): boolean {
+  return /P1002|pg_advisory_lock|advisory lock/i.test(output)
+}
+
 export function interpretMigrateDiffExit(status: number | null): "clean" | "drift" | "error" {
   if (status === 0) return "clean"
   if (status === 2) return "drift"

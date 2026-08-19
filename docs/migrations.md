@@ -71,8 +71,8 @@ When an explicit drop is approved: snapshot (Neon backup or `pg_dump` of the lef
 - Generic `npm run build` is mutation-free (`prisma generate && next build`).
 - Vercel uses `npm run build:vercel` ([vercel.json](../vercel.json)).
 - Migrations run **only** when `VERCEL_ENV=production`. Preview and development builds skip migrate even if `ALLOW_PRODUCTION_MIGRATE` is set. That override is for non-Vercel local use only and still refuses non-local hosts.
-- If the pooled `DATABASE_URL` cannot run DDL, set a direct URL that Prisma can use for migrate (do not log it).
-- Serialize production deploys; concurrent migrates can contend on Prisma’s lock.
+- Production migrate prefers `DIRECT_URL` or `DATABASE_URL_UNPOOLED` if set. Otherwise it strips a Neon `-pooler` hostname from `DATABASE_URL` so `prisma migrate deploy` uses a direct session (advisory locks fail on the pooler).
+- If migrate still times out on `pg_advisory_lock` (`P1002`), the production build retries once. Serialize production deploys when two builds would overlap.
 
 Explicit apply (you must request it): `npm run db:migrate:deploy`.
 

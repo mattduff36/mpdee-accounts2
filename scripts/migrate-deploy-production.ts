@@ -3,6 +3,8 @@ import { getEffectiveDatabaseUrl, loadLocalEnv, prismaCliEnv } from "./load-env"
 import {
   assertSafeDatabaseUrl,
   formatDatabaseTargetIdentity,
+  isMigrateAdvisoryLockTimeout,
+  resolveMigrateDatabaseUrl,
   sanitizeDatabaseOutput,
 } from "./database-target"
 
@@ -67,24 +69,45 @@ export function runProductionMigrateDeploy(
     throw new Error(decision.reason)
   }
 
-  const url = env.DATABASE_URL || getEffectiveDatabaseUrl()
+  const url = resolveMigrateDatabaseUrl({
+    DIRECT_URL: env.DIRECT_URL,
+    DATABASE_URL_UNPOOLED: env.DATABASE_URL_UNPOOLED,
+    DATABASE_URL: env.DATABASE_URL || getEffectiveDatabaseUrl(),
+  })
   const identity = assertSafeDatabaseUrl(url, {
     allowRemote: env.VERCEL_ENV === "production",
   })
   console.log(`Migrating database ${formatDatabaseTargetIdentity(identity)}`)
 
-  const result = spawn(npmCommand(), PRISMA_MIGRATE_DEPLOY_ARGS, {
+  const spawnOptions = {
     cwd: process.cwd(),
     encoding: "utf8",
     env: prismaCliEnv(url as string, env),
     shell: process.platform === "win32",
-  })
-  const output = sanitizeDatabaseOutput(`${result.stdout ?? ""}${result.stderr ?? ""}`)
+  }
+  const retryDelayMs = Number(env.PRISMA_MIGRATE_LOCK_RETRY_MS ?? 8000)
+  let result = spawn(npmCommand(), PRISMA_MIGRATE_DEPLOY_ARGS, spawnOptions)
+  let spawnCount = 1
+  let output = sanitizeDatabaseOutput(`${result.stdout ?? ""}${result.stderr ?? ""}`)
   if (output.trim()) console.log(output.trim())
+
+  if (result.status !== 0 && isMigrateAdvisoryLockTimeout(`${result.stdout ?? ""}${result.stderr ?? ""}`)) {
+    console.log("Retrying migrate deploy after advisory lock timeout")
+    if (Number.isFinite(retryDelayMs) && retryDelayMs > 0) {
+      spawnSync(process.execPath, ["-e", `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,${retryDelayMs})`], {
+        encoding: "utf8",
+      })
+    }
+    result = spawn(npmCommand(), PRISMA_MIGRATE_DEPLOY_ARGS, spawnOptions)
+    spawnCount += 1
+    output = sanitizeDatabaseOutput(`${result.stdout ?? ""}${result.stderr ?? ""}`)
+    if (output.trim()) console.log(output.trim())
+  }
+
   if (result.status !== 0) {
     throw new Error("prisma migrate deploy failed")
   }
-  return { action: "migrate", spawnCount: 1 }
+  return { action: "migrate", spawnCount }
 }
 
 const invokedDirectly = /\/migrate-deploy-production\.ts$/.test(
