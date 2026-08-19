@@ -16,6 +16,6 @@
 ## Deployment Checklist
 - [ ] Change default admin password
 - [ ] Generate strong SESSION_SECRET
-- [ ] Use PostgreSQL in production
+- [ ] PostgreSQL `DATABASE_URL` (SQLite is not used)
 - [ ] Enable HTTPS
 - [ ] Set NODE_ENV=production

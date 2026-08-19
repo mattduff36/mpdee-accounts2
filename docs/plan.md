@@ -56,9 +56,9 @@ Rebuild a production-ready small business accounting/invoicing web app from scra
 - TEST_REPORT.md
 - Final zip/package
 
-## Skills Used
-- vibecoding-webapp-swarm: For React/Next.js app building
-- Progressive loading as needed
+## Skills Used (historical)
+
+The rebuild used a swarm-style split of agents. That is **not** an active project skill. Current agent guidance is in [AGENTS.md](../AGENTS.md) and `.cursor/rules/`.
 
 ## Agent Swarm Structure
 1. **Architect_Agent**: Designs schema, API, and app structure

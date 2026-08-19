@@ -1,0 +1,14 @@
+---
+description: Prisma migrations are expand-only; never migrate from finalise or generic npm run build
+globs: prisma/**
+alwaysApply: false
+---
+
+# Database migrations
+
+- Put schema changes in `prisma/migrations/`. Do not use `db push`.
+- Default to expand-only SQL. Rename/drop is a separate CRITICAL task.
+- Never rewrite a published migration directory or SQL after it has been applied or resolved.
+- Before `migrate resolve --applied` on a former db-push database, require zero drift (`npm run db:drift-check`) and a snapshot.
+- `npm run build` and `/fap` must not apply migrations. Production apply is `npm run build:vercel` when `VERCEL_ENV=production`, or an explicit `npm run db:migrate:deploy` the user requested.
+- Never print `DATABASE_URL`. Read [docs/migrations.md](docs/migrations.md) before migrating.

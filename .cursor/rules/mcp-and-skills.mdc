@@ -1,0 +1,14 @@
+---
+description: MCP and skill boundaries for this accounts repo (no Higgsfield deploy, no MJML unless asked)
+alwaysApply: true
+---
+
+# MCP and skills
+
+- Do **not** use Higgsfield `create_website`, `deploy_website`, `publish_website`, or TikTok tools here.
+- Do **not** use Cursor Origin or share skills on native Windows.
+- Vercel MCP is optional and may need auth. Default deploy is git push to the linked remote. Authenticate Vercel MCP only when the user asks to inspect or manage Vercel from chat.
+- `deploy-to-vercel` is not a synonym for `/fap`. Do not commit-and-push via that skill unless the user asked to deploy that way.
+- `email-html-mjml` applies **only** if the user explicitly asks for MJML. Do not add the `mjml` package unprompted.
+- `supabase-postgres-best-practices` is generic Postgres advice only. Do not introduce Supabase.
+- Prefer workspace file tools over the filesystem MCP for this repo.

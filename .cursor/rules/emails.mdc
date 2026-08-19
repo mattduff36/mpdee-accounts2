@@ -1,0 +1,13 @@
+---
+description: Transactional email stays TypeScript HTML in src/emails; no parallel MJML tree
+globs: src/emails/**
+alwaysApply: false
+---
+
+# Email templates
+
+Keep invoice and payment emails as TypeScript HTML in `src/emails/`, including `shared.ts` brand colours and `emailShell`.
+
+- Do not add a parallel `.mjml` / compiled `.html` tree.
+- Do not `npm install mjml` unless the user explicitly asks for an MJML redesign.
+- Preserve `{{placeholder}}` interpolation and HTML escaping from `shared.ts`.

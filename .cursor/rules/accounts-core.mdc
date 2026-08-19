@@ -1,0 +1,15 @@
+---
+description: Core conventions for mpdee-accounts2 (accounts app, Prisma, money in pence)
+alwaysApply: true
+---
+
+# mpdee-accounts2 core
+
+This repo is **mpdee-accounts2**, a UK accounting app. It is not avsworklog.
+
+- Store money as integer **pence**. Do not introduce floating-pound persistence.
+- Use **Prisma** against PostgreSQL. Do not add a Supabase client, Supabase Auth, or RLS unless the user explicitly requests it.
+- Do not copy avsworklog finalise, migration ledgers, release-version bump, or `workflow-protocol`.
+- `/finalise` maps only to `npm run finalise`. `/fap` maps only to `npm run finalise:push`. State the current branch before push. Neither command may run `prisma migrate deploy`, `migrate dev`, or `db push`.
+- `npm run db:push` is forbidden for schema changes now that migrations exist. Add a Prisma migration instead.
+- Never print `DATABASE_URL` or other secrets. Do not commit `.env` or `*.tsbuildinfo`.

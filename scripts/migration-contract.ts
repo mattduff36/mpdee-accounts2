@@ -1,0 +1,1 @@
+export const BASELINE_MIGRATION_NAME = "20260819160000_init"

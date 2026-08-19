@@ -1,0 +1,13 @@
+---
+description: Required CRITICAL procedure for Prisma schema and production-data tasks
+globs: "{prisma/**,scripts/migrate*.ts,scripts/database-target.ts,docs/migrations.md}"
+alwaysApply: false
+---
+
+# Migration safety
+
+Read `docs/migrations.md` before applying or resolving migrations.
+
+- Use Prisma migrate only. Do not add an avsworklog-style ledger or print `DATABASE_URL`.
+- Snapshot existing databases before `migrate resolve --applied`. Drift must be zero.
+- Do not route migration failures through generic finalise repair. Finalise must not migrate.

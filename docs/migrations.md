@@ -1,0 +1,78 @@
+# Prisma migrations
+
+This app uses Prisma Migrate against PostgreSQL. `npm run db:push` is **forbidden** once migrations exist. Never print `DATABASE_URL`.
+
+Baseline migration name: `20260819160000_init`. After it is applied or resolved in any environment, do not rewrite that directory or SQL.
+
+## Empty database
+
+```bash
+npm run db:migrate:deploy
+```
+
+Then seed if needed: `npm run db:seed`.
+
+## Database already created with `db push`
+
+1. Snapshot the database.
+2. Confirm zero drift. Hosted databases need the remote override:
+
+```bash
+npm run db:drift-check -- --allow-remote-db
+```
+
+Local Postgres can omit the flag. The command must exit 0.
+3. Record the baseline as already applied **without** running its SQL:
+
+```bash
+npx prisma migrate resolve --applied 20260819160000_init
+```
+
+4. Later schema changes use new migrations and `npm run db:migrate:deploy` (or a production Vercel build).
+
+If drift-check fails, **do not** resolve. Reconcile the database with `prisma/schema.prisma` first.
+
+## Local development
+
+- New schema: edit `prisma/schema.prisma`, then `npm run db:migrate` (`prisma migrate dev`).
+- Default to expand-only SQL. Rename or drop is a separate CRITICAL change.
+- `npm run build` does **not** apply migrations.
+
+## Production (Vercel)
+
+- Generic `npm run build` is mutation-free (`prisma generate && next build`).
+- Vercel uses `npm run build:vercel` ([vercel.json](../vercel.json)).
+- Migrations run **only** when `VERCEL_ENV=production`. Preview and development builds skip migrate even if `ALLOW_PRODUCTION_MIGRATE` is set. That override is for non-Vercel local use only and still refuses non-local hosts.
+- If the pooled `DATABASE_URL` cannot run DDL, set a direct URL that Prisma can use for migrate (do not log it).
+- Serialize production deploys; concurrent migrates can contend on Prisma’s lock.
+
+Explicit apply (you must request it): `npm run db:migrate:deploy`.
+
+`/finalise` and `/fap` never run `migrate deploy`, `migrate dev`, or `db push`.
+
+## Rollback
+
+- Fresh empty database: drop/recreate the database and deploy again.
+- db-push adoption: `resolve --applied` only changes migration metadata; keep the snapshot.
+- Migration applied but app deploy failed: leave the migration applied; roll back application code. Do not delete migration history.
+- Contracting schema requires a later migration after old code is retired.
+
+## Live database acceptance (not required for every finalise)
+
+These need a disposable Postgres and are not run in the default `npm test` suite:
+
+- MIG-002: `migrate deploy` on an empty database, then zero drift.
+- MIG-003: snapshot a db-push database, confirm drift-check is clean, `migrate resolve --applied 20260819160000_init`, deploy is a no-op, data unchanged.
+- MIG-004: a drifted database must fail drift-check; do not resolve.
+- ROLL-001: after an expand migration, previous application code still runs.
+
+Set `ACCOUNTS_LIVE_DB_TESTS=1` against local Postgres to opt in.
+
+## First `/fap`
+
+Confirm `git remote get-url origin` and the current branch before the first real push. Vercel MCP is optional (authenticate only to inspect Vercel from chat). Git push remains the default deploy.
+
+## Unresolved in this pass
+
+- **ROLL-001** — A live schema-ahead / application-rollback rehearsal against a real database was not run here. Treat that as an operational step before the first production migrate.
+- **MIG-002 / MIG-003 / MIG-004** — Empty-DB deploy, db-push adoption, and drifted-DB refusal need a disposable Postgres instance. Use `npm run db:drift-check` before any `migrate resolve --applied`.
