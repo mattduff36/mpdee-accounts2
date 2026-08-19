@@ -1,5 +1,6 @@
 import { Resend } from "resend"
 import { prisma } from "./db"
+import { invoiceSendLockKey } from "./invoice-send-lock"
 import { generateInvoicePDF } from "./pdf"
 import { renderInvoiceEmail } from "@/emails/invoice-email"
 import { renderPaymentReceivedEmail } from "@/emails/payment-received-email"
@@ -70,7 +71,7 @@ export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean
   })
 
   const claim: Claim = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-send:${invoiceId}`}))`
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceSendLockKey(invoiceId)}))`
 
     const invoice = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -187,6 +188,7 @@ export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceSendLockKey(invoiceId)}))`
     await tx.emailLog.update({
       where: { id: claim.pendingId },
       data: {

@@ -9,7 +9,7 @@ import { MarkAsPaidButton } from "@/components/MarkAsPaidButton"
 import { SendInvoiceButton } from "@/components/SendInvoiceButton"
 import { PagedDataTable } from "@/components/PagedDataTable"
 import { buildMonthTabs, groupByMonth, monthLabel, pluralize, resolveActiveMonth, sumBy } from "@/lib/monthly-list"
-import { Download, Eye } from "lucide-react"
+import { Download, Eye, Pencil } from "lucide-react"
 import Link from "next/link"
 
 async function getInvoices(status?: string, search?: string) {
@@ -122,6 +122,9 @@ export default async function InvoicesPage({
               </td>
               <td className="px-4 py-3 text-right">
                 <div className="inline-flex items-center justify-end gap-1">
+                  {inv.status === "draft" && (
+                    <IconAction title="Edit Invoice" icon={Pencil} href={`/invoices/${inv.id}/edit`} />
+                  )}
                   {sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
                   {isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
                   <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${inv.id}/pdf`} external />

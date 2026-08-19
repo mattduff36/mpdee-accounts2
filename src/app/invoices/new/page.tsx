@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db"
 import { redirect } from "next/navigation"
 import { NewInvoiceForm } from "@/components/NewInvoiceForm"
 import { parseCurrency } from "@/lib/format"
+import { calculateInvoiceDraftLine } from "@/lib/invoice-items"
 import { createInvoiceWithAllocatedNumber } from "@/lib/invoice-number"
 
 export default async function NewInvoicePage() {
@@ -28,9 +29,7 @@ export default async function NewInvoicePage() {
         const qty = parseFloat(quantities[i] || "1")
         const price = parseCurrency(unitPrices[i] || "0")
         const commission = parseFloat(commissions[i] || "0") || 0
-        const gross = Math.round(qty * price)
-        const commissionAmount = commission > 0 ? Math.round(gross * (commission / 100)) : 0
-        const lineTotal = Math.max(0, gross - commissionAmount)
+        const { lineTotal } = calculateInvoiceDraftLine(qty, price, commission)
         subtotal += lineTotal
         return {
           description: desc.trim(),

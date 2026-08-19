@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { IconAction } from "@/components/IconAction"
 import { MarkAsPaidButton } from "@/components/MarkAsPaidButton"
 import { SendInvoiceButton } from "@/components/SendInvoiceButton"
-import { Download } from "lucide-react"
+import { Download, Pencil } from "lucide-react"
 import { notFound } from "next/navigation"
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -22,6 +22,9 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     <div className="space-y-6 max-w-4xl">
       <PageHeader title={`Invoice ${invoice.invoiceNumber}`}>
         <div className="flex gap-1 flex-wrap">
+          {invoice.status === "draft" && (
+            <IconAction title="Edit Invoice" icon={Pencil} href={`/invoices/${id}/edit`} />
+          )}
           {sendMode && <SendInvoiceButton invoiceId={id} mode={sendMode} />}
           {isEligibleMarkPaidStatus(invoice.status) && <MarkAsPaidButton invoiceId={id} />}
           <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${id}/pdf`} external />

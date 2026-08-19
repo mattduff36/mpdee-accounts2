@@ -17,27 +17,51 @@ type ClientOption = {
   name: string
 }
 
+function seedItems(initialItems?: InvoiceLineItemDraft[]) {
+  return initialItems && initialItems.length > 0 ? initialItems : [blankInvoiceLineItem(0)]
+}
+
 export function NewInvoiceForm({
   clients,
   defaultPaymentTerms,
   defaultIssueDate,
   action,
+  title = "New Invoice",
+  submitLabel = "Save as Draft",
+  cancelHref = "/invoices",
+  errorMessage,
+  initial,
 }: {
   clients: ClientOption[]
   defaultPaymentTerms: number
   defaultIssueDate: string
   action: (formData: FormData) => void | Promise<void>
+  title?: string
+  submitLabel?: string
+  cancelHref?: string
+  errorMessage?: string | null
+  initial?: {
+    clientId?: string
+    paymentTerms?: string
+    issueDate?: string
+    dueDate?: string
+    notes?: string
+    internalNotes?: string
+    items?: InvoiceLineItemDraft[]
+    showAgency?: boolean
+  }
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const nextId = useRef(1)
-  const [clientId, setClientId] = useState(clients[0]?.id ?? "")
-  const [paymentTerms, setPaymentTerms] = useState(String(defaultPaymentTerms))
-  const [issueDate, setIssueDate] = useState(defaultIssueDate)
-  const [dueDate, setDueDate] = useState("")
-  const [notes, setNotes] = useState("")
-  const [internalNotes, setInternalNotes] = useState("")
-  const [items, setItems] = useState<InvoiceLineItemDraft[]>([blankInvoiceLineItem(0)])
-  const [showAgency, setShowAgency] = useState(false)
+  const startingItems = seedItems(initial?.items)
+  const nextId = useRef(Math.max(0, ...startingItems.map((item) => item.id)) + 1)
+  const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || "")
+  const [paymentTerms, setPaymentTerms] = useState(initial?.paymentTerms ?? String(defaultPaymentTerms))
+  const [issueDate, setIssueDate] = useState(initial?.issueDate ?? defaultIssueDate)
+  const [dueDate, setDueDate] = useState(initial?.dueDate ?? "")
+  const [notes, setNotes] = useState(initial?.notes ?? "")
+  const [internalNotes, setInternalNotes] = useState(initial?.internalNotes ?? "")
+  const [items, setItems] = useState<InvoiceLineItemDraft[]>(startingItems)
+  const [showAgency, setShowAgency] = useState(initial?.showAgency ?? false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importNotice, setImportNotice] = useState<string | null>(null)
 
@@ -98,7 +122,7 @@ export function NewInvoiceForm({
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <PageHeader title="New Invoice">
+      <PageHeader title={title}>
         <input
           ref={fileInputRef}
           type="file"
@@ -111,9 +135,9 @@ export function NewInvoiceForm({
           Import
         </Button>
       </PageHeader>
-      {importError && (
+      {(errorMessage || importError) && (
         <p className="text-sm text-rose-600" role="alert">
-          {importError}
+          {importError || errorMessage}
         </p>
       )}
       {importNotice && !importError && <p className="text-sm text-slate-600">{importNotice}</p>}
@@ -190,8 +214,8 @@ export function NewInvoiceForm({
           </div>
         </div>
         <div className="flex gap-2">
-          <Button type="submit">Save as Draft</Button>
-          <a href="/invoices">
+          <Button type="submit">{submitLabel}</Button>
+          <a href={cancelHref}>
             <Button type="button" variant="secondary">
               Cancel
             </Button>
