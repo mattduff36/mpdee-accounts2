@@ -45,7 +45,9 @@ export function runDriftCheck(options: { allowRemote?: boolean } = {}): void {
     return
   }
   if (verdict === "drift") {
-    throw new Error("Schema drift detected. Do not run migrate resolve --applied.")
+    throw new Error(
+      "Schema drift detected. Do not run migrate resolve --applied. If this is hosted production, leftover snake_case tables are expected; see docs/migrations.md."
+    )
   }
   throw new Error(sanitizeDatabaseOutput(result.stderr || "prisma migrate diff failed"))
 }

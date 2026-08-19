@@ -14,6 +14,7 @@ This is a UK small-business **accounts** app: Next.js 14, Prisma, PostgreSQL. Mo
 - Schema changes go through Prisma migrations. `db push` is forbidden once migrations exist.
 - `npm run build` does **not** migrate. Production Vercel uses `npm run build:vercel`, which migrates only when `VERCEL_ENV=production`.
 - See [docs/migrations.md](docs/migrations.md). Never print `DATABASE_URL`.
+- Hosted production still has leftover snake_case tables (`clients`, `invoices`, …). `db:drift-check` failing there is expected. Do not drop them or re-apply `20260819160000_init` unless the user explicitly requests a CRITICAL drop.
 
 ## Email
 

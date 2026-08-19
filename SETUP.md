@@ -29,7 +29,7 @@ Sign in with `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `.env`. Change both before 
 - [ ] Set `NODE_ENV=production`
 - [ ] Configure email provider
 - [ ] Confirm git `origin` and the branch you will push before the first `/fap`
-- [ ] If this database was created with `db push`, snapshot it, run `npm run db:drift-check -- --allow-remote-db`, then `npx prisma migrate resolve --applied 20260819160000_init` only if drift-check is clean
+- [ ] If this database was created with `db push`, snapshot it, run `npm run db:drift-check -- --allow-remote-db`. Hosted production may fail that check because of leftover snake_case tables; that is expected. See [docs/migrations.md](docs/migrations.md). `20260819160000_init` is already marked applied — do not resolve or deploy it again.
 
 ## Vercel and MCP
 
