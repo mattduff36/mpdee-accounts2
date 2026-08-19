@@ -1,16 +1,8 @@
 import { prisma } from "@/lib/db"
 import { redirect } from "next/navigation"
-import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { NewInvoiceForm } from "@/components/NewInvoiceForm"
 import { parseCurrency } from "@/lib/format"
 import { createInvoiceWithAllocatedNumber } from "@/lib/invoice-number"
-
-const BUSINESS_AREAS = [
-  { value: "CREATIVE", label: "Creative" },
-  { value: "DEVELOPMENT", label: "Development" },
-  { value: "SUPPORT", label: "Support" },
-]
 
 export default async function NewInvoicePage() {
   const clients = await prisma.client.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
@@ -49,7 +41,7 @@ export default async function NewInvoicePage() {
           lineTotal,
           vatAmount: 0,
           agencyCommission: commission,
-          businessArea: areas[i] || "CREATIVE",
+          businessArea: areas[i] || "DEVELOPMENT",
           sortOrder: i,
         }
       })
@@ -88,88 +80,15 @@ export default async function NewInvoicePage() {
     redirect("/invoices")
   }
 
+  const today = new Date()
+  const defaultIssueDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`
+
   return (
-    <div className="space-y-6 max-w-4xl">
-      <PageHeader title="New Invoice" />
-      <form action={createInvoice} className="space-y-6 rounded-lg border bg-white p-6">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Client *</label>
-            <select name="clientId" required className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms (days)</label>
-            <Input name="paymentTerms" type="number" defaultValue={String(settings?.defaultPaymentTerms || 30)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Issue Date *</label>
-            <Input name="issueDate" type="date" required defaultValue={new Date().toISOString().split("T")[0]} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Due Date *</label>
-            <Input name="dueDate" type="date" required />
-          </div>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Line Items</h3>
-          <div className="space-y-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="grid gap-2 sm:grid-cols-12 items-end rounded-md border p-3">
-                <div className="sm:col-span-4">
-                  <label className="block text-xs text-gray-500 mb-1">Description</label>
-                  <Input name="description[]" placeholder="Item description" />
-                </div>
-                <div className="sm:col-span-1">
-                  <label className="block text-xs text-gray-500 mb-1">Qty</label>
-                  <Input name="quantity[]" type="number" step="0.01" defaultValue="1" />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs text-gray-500 mb-1">Rate</label>
-                  <Input name="unitPrice[]" type="text" placeholder="0.00" />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs text-gray-500 mb-1">Agency %</label>
-                  <Input name="agencyCommission[]" type="number" step="0.1" defaultValue="0" />
-                </div>
-                <div className="sm:col-span-3">
-                  <label className="block text-xs text-gray-500 mb-1">Business Area</label>
-                  <select name="businessArea[]" className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" defaultValue="CREATIVE">
-                    {BUSINESS_AREAS.map((a) => (
-                      <option key={a.value} value={a.value}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (client-visible)</label>
-            <textarea name="notes" rows={3} className="flex min-h-[80px] w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Internal Notes</label>
-            <textarea name="internalNotes" rows={3} className="flex min-h-[80px] w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" />
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button type="submit">Save as Draft</Button>
-          <a href="/invoices">
-            <Button type="button" variant="secondary">
-              Cancel
-            </Button>
-          </a>
-        </div>
-      </form>
-    </div>
+    <NewInvoiceForm
+      clients={clients.map((client) => ({ id: client.id, name: client.name }))}
+      defaultPaymentTerms={settings?.defaultPaymentTerms || 30}
+      defaultIssueDate={defaultIssueDate}
+      action={createInvoice}
+    />
   )
 }

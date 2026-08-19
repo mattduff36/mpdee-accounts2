@@ -1,4 +1,4 @@
-export const SAFETY_CONTRACT = "accounts-finalise-v1"
+export const SAFETY_CONTRACT = "accounts-finalise-v2"
 
 export type FinaliseCommandId = "finalise" | "fap"
 

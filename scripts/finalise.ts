@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
-import { getEffectiveDatabaseUrl, loadLocalEnv } from "./load-env"
+import { envLocalAuthorizesDatabaseUrl, getEffectiveDatabaseUrl, loadLocalEnv } from "./load-env"
 import {
   assertSafeDatabaseUrl,
   formatDatabaseTargetIdentity,
@@ -105,7 +105,7 @@ export function runFinalise(argv = process.argv.slice(2)): void {
   const databaseUrl = getEffectiveDatabaseUrl()
   if (databaseUrl) {
     const identity = assertSafeDatabaseUrl(databaseUrl, {
-      allowRemote: options.allowRemoteDb,
+      allowRemote: options.allowRemoteDb || envLocalAuthorizesDatabaseUrl(databaseUrl),
     })
     console.log(`Database target: ${formatDatabaseTargetIdentity(identity)}`)
   } else {

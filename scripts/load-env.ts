@@ -20,21 +20,36 @@ function parseEnvLine(line: string): [string, string] | null {
   return [key, value]
 }
 
-export function readFileEnvMap(cwd = process.cwd()): Record<string, string> {
-  const fromFiles: Record<string, string> = {}
-  for (const fileName of [".env", ".env.local"]) {
-    const envPath = resolve(cwd, fileName)
-    if (!existsSync(envPath)) continue
+export function readNamedEnvFile(fileName: string, cwd = process.cwd()): Record<string, string> {
+  const fromFile: Record<string, string> = {}
+  const envPath = resolve(cwd, fileName)
+  if (!existsSync(envPath)) return fromFile
 
-    const lines = readFileSync(envPath, "utf8").split(/\r?\n/)
-    for (const line of lines) {
-      const parsedLine = parseEnvLine(line)
-      if (!parsedLine) continue
-      const [key, value] = parsedLine
-      fromFiles[key] = value
-    }
+  const lines = readFileSync(envPath, "utf8").split(/\r?\n/)
+  for (const line of lines) {
+    const parsedLine = parseEnvLine(line)
+    if (!parsedLine) continue
+    const [key, value] = parsedLine
+    fromFile[key] = value
   }
-  return fromFiles
+  return fromFile
+}
+
+export function readFileEnvMap(cwd = process.cwd()): Record<string, string> {
+  return {
+    ...readNamedEnvFile(".env", cwd),
+    ...readNamedEnvFile(".env.local", cwd),
+  }
+}
+
+export function getEnvLocalDatabaseUrl(cwd = process.cwd()): string | undefined {
+  const value = readNamedEnvFile(".env.local", cwd).DATABASE_URL
+  return value && value.length > 0 ? value : undefined
+}
+
+export function envLocalAuthorizesDatabaseUrl(effectiveUrl: string | undefined, cwd = process.cwd()): boolean {
+  if (!effectiveUrl) return false
+  return getEnvLocalDatabaseUrl(cwd) === effectiveUrl
 }
 
 /**
