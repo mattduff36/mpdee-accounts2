@@ -7,11 +7,13 @@ import { StatusBadge } from "@/components/StatusBadge"
 import { IconAction } from "@/components/IconAction"
 import { MarkAsPaidButton } from "@/components/MarkAsPaidButton"
 import { SendInvoiceButton } from "@/components/SendInvoiceButton"
+import { PagedDataTable } from "@/components/PagedDataTable"
+import { buildMonthTabs, groupByMonth, monthLabel, pluralize, resolveActiveMonth, sumBy } from "@/lib/monthly-list"
 import { Download, Eye } from "lucide-react"
 import Link from "next/link"
 
 async function getInvoices(status?: string, search?: string) {
-  const where: any = {}
+  const where: Record<string, unknown> = {}
   if (status && status !== "all") where.status = status
   if (search)
     where.OR = [
@@ -28,10 +30,19 @@ async function getInvoices(status?: string, search?: string) {
 export default async function InvoicesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; search?: string }>
+  searchParams: Promise<{ status?: string; search?: string; month?: string }>
 }) {
   const sp = await searchParams
   const invoices = await getInvoices(sp.status, sp.search)
+  const groups = groupByMonth(invoices, (invoice) => invoice.issueDate)
+  const months = buildMonthTabs(groups, {
+    includeKeys: [sp.month],
+    preview: (items) => formatCurrency(sumBy(items, (item) => item.total)),
+  })
+  const activeMonth = resolveActiveMonth(months.map((month) => month.key), sp.month)
+  const visible = groups.get(activeMonth) ?? []
+  const query = { status: sp.status, search: sp.search }
+
   return (
     <div className="space-y-4">
       <PageHeader title="Invoices" description="Manage invoices and track payments">
@@ -40,6 +51,7 @@ export default async function InvoicesPage({
         </Link>
       </PageHeader>
       <form className="flex gap-2">
+        {sp.month && <input type="hidden" name="month" value={sp.month} />}
         <input
           name="search"
           type="text"
@@ -65,53 +77,61 @@ export default async function InvoicesPage({
           Filter
         </Button>
       </form>
-      <div className="rounded-lg border bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-gray-50">
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Number</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Client</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Issue Date</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Due Date</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
+      <PagedDataTable
+        path="/invoices"
+        query={query}
+        months={months}
+        activeMonth={activeMonth}
+        empty={invoices.length === 0 ? "No invoices found" : `No invoices in ${monthLabel(activeMonth)}`}
+        colSpan={7}
+        header={
+          <tr className="border-b bg-gray-50">
+            <th className="px-4 py-3 text-left font-medium text-gray-500">Number</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-500">Client</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-500">Issue Date</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-500">Due Date</th>
+            <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
+            <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+            <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
+          </tr>
+        }
+        subtotals={{
+          label: `${monthLabel(activeMonth)} · ${pluralize(visible.length, "invoice")}`,
+          items: [
+            { label: "Invoiced", value: formatCurrency(sumBy(visible, (item) => item.total)) },
+            { label: "Paid", value: formatCurrency(sumBy(visible, (item) => item.amountPaid)), tone: "success" },
+            { label: "Due", value: formatCurrency(sumBy(visible, (item) => item.balanceDue)), tone: "danger" },
+          ],
+        }}
+      >
+        {visible.map((inv) => {
+          const sendMode = invoiceSendMode(inv.status)
+          return (
+            <tr key={inv.id} className="border-b hover:bg-gray-50">
+              <td className="px-4 py-3 font-medium">
+                <Link href={`/invoices/${inv.id}`} className="text-blue-600 hover:underline">
+                  {inv.invoiceNumber}
+                </Link>
+              </td>
+              <td className="px-4 py-3">{inv.client.name}</td>
+              <td className="px-4 py-3 text-gray-500">{formatDate(inv.issueDate)}</td>
+              <td className="px-4 py-3 text-gray-500">{formatDate(inv.dueDate)}</td>
+              <td className="px-4 py-3 text-right font-medium">{formatCurrency(inv.total)}</td>
+              <td className="px-4 py-3">
+                <StatusBadge status={inv.status} />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <div className="inline-flex items-center justify-end gap-1">
+                  {sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
+                  {isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
+                  <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${inv.id}/pdf`} external />
+                  <IconAction title="View Invoice" icon={Eye} href={`/invoices/${inv.id}`} />
+                </div>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {invoices.map((inv) => {
-              const sendMode = invoiceSendMode(inv.status)
-              return (
-              <tr key={inv.id} className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium">
-                  <Link href={`/invoices/${inv.id}`} className="text-blue-600 hover:underline">
-                    {inv.invoiceNumber}
-                  </Link>
-                </td>
-                <td className="px-4 py-3">{inv.client.name}</td>
-                <td className="px-4 py-3 text-gray-500">{formatDate(inv.issueDate)}</td>
-                <td className="px-4 py-3 text-gray-500">{formatDate(inv.dueDate)}</td>
-                <td className="px-4 py-3 text-right font-medium">{formatCurrency(inv.total)}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={inv.status} />
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="inline-flex items-center justify-end gap-1">
-                    {sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
-                    {isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
-                    <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${inv.id}/pdf`} external />
-                    <IconAction title="View Invoice" icon={Eye} href={`/invoices/${inv.id}`} />
-                  </div>
-                </td>
-              </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        {invoices.length === 0 && (
-          <div className="py-8 text-center text-sm text-gray-500">No invoices found</div>
-        )}
-      </div>
+          )
+        })}
+      </PagedDataTable>
     </div>
   )
 }

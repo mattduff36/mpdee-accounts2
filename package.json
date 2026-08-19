@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx --test src/lib/payments.test.ts src/app/api/invoices/[id]/mark-paid/route.test.ts",
+    "test": "tsx --test src/lib/payments.test.ts src/lib/monthly-list.test.ts src/app/api/invoices/[id]/mark-paid/route.test.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
