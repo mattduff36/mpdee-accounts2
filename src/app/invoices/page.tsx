@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db"
+import { visibleInvoiceWhere } from "@/lib/invoice-visibility"
+import type { Prisma } from "@prisma/client"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { invoiceSendMode, isEligibleMarkPaidStatus } from "@/lib/payments"
 import { PageHeader } from "@/components/PageHeader"
@@ -13,7 +15,7 @@ import { Download, Eye, Pencil } from "lucide-react"
 import Link from "next/link"
 
 async function getInvoices(status?: string, search?: string) {
-  const where: Record<string, unknown> = {}
+  const where: Prisma.InvoiceWhereInput = { ...visibleInvoiceWhere }
   if (status && status !== "all") where.status = status
   if (search)
     where.OR = [

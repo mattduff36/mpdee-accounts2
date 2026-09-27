@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate, daysOverdue } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { PagedDataTable } from "@/components/PagedDataTable"
@@ -11,7 +12,7 @@ export default async function DebtorsPage({
 }) {
   const sp = await searchParams
   const invoices = await prisma.invoice.findMany({
-    where: { status: { in: ["sent", "viewed", "partial", "overdue"] } },
+    where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial", "overdue"] } }),
     include: { client: { select: { name: true } } },
     orderBy: { dueDate: "asc" },
   })

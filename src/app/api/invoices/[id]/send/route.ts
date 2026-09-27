@@ -11,6 +11,9 @@ export async function POST(
     const { id } = await params
     const result = await sendInvoiceEmail(id)
     if (result.ok) return NextResponse.json({ success: true })
+    if (result.error === "Invoice not found") {
+      return NextResponse.json({ success: false, error: "Invoice not found" }, { status: 404 })
+    }
     return NextResponse.json(
       { success: false, error: result.error || "Failed to send invoice email" },
       { status: 500 }

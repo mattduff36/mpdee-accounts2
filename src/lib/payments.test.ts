@@ -156,6 +156,16 @@ test("T4 / PAY-PARTIAL-001: mark-paid writes remaining payment and paid invoice 
   assert.deepEqual(emails, [{ invoiceId: "inv_1", amount: 7_500 }])
 })
 
+test("hidden invoice is not found and creates no payment", async () => {
+  const { db, state } = createDb(invoice({ viewHidden: true }))
+  await assert.rejects(
+    () => markInvoicePaid("inv_1", { db, sendPaymentReceivedEmail: async () => ({ ok: true }) }),
+    (error: unknown) => error instanceof MarkPaidError && error.code === "not_found"
+  )
+  assert.equal(state.committedPayments.length, 0)
+  assert.equal(state.invoice?.status, "sent")
+})
+
 test("PAY-STATUS-001: ineligible status creates no payment", async () => {
   const { db, state } = createDb(invoice({ status: "draft" }))
   await assert.rejects(() => markInvoicePaid("inv_1", { db, sendPaymentReceivedEmail: async () => ({ ok: true }) }), MarkPaidError)

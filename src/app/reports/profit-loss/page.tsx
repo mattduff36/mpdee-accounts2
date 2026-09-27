@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { startOfYear, endOfYear } from "@/lib/format"
@@ -7,7 +8,7 @@ export default async function ProfitLossPage() {
   const now = new Date()
   const ys = startOfYear(now)
   const ye = endOfYear(now)
-  const revenue = await prisma.invoice.aggregate({ _sum: { total: true }, where: { status: "paid", paidAt: { gte: ys, lte: ye } } })
+  const revenue = await prisma.invoice.aggregate({ _sum: { total: true }, where: andVisibleInvoice({ status: "paid", paidAt: { gte: ys, lte: ye } }) })
   const expenses = await prisma.expense.aggregate({ _sum: { grossAmount: true }, where: { date: { gte: ys, lte: ye } } })
   const rev = revenue._sum.total || 0
   const exp = expenses._sum.grossAmount || 0

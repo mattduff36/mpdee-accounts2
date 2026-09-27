@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireApiAuth } from "@/lib/auth"
 import { generateInvoicePDF } from "@/lib/pdf"
 import { prisma } from "@/lib/db"
+import { visibleInvoiceOrNull } from "@/lib/invoice-visibility"
 
 export async function GET(
   _request: NextRequest,
@@ -10,10 +11,12 @@ export async function GET(
   try {
     await requireApiAuth()
     const { id } = await params
-    const invoice = await prisma.invoice.findUnique({
-      where: { id },
-      include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
-    })
+    const invoice = visibleInvoiceOrNull(
+      await prisma.invoice.findUnique({
+        where: { id },
+        include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
+      })
+    )
     if (!invoice) {
       return NextResponse.json({ success: false, error: "Invoice not found" }, { status: 404 })
     }

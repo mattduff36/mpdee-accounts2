@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { startOfYear } from "@/lib/format"
@@ -6,7 +7,7 @@ import { startOfYear } from "@/lib/format"
 export default async function VatReportPage() {
   const yearStart = startOfYear(new Date())
   const [outputVat, inputVat] = await Promise.all([
-    prisma.invoice.aggregate({ _sum: { vatTotal: true }, where: { status: { not: "draft" }, issueDate: { gte: yearStart } } }),
+    prisma.invoice.aggregate({ _sum: { vatTotal: true }, where: andVisibleInvoice({ status: { not: "draft" }, issueDate: { gte: yearStart } }) }),
     prisma.expense.aggregate({ _sum: { vatAmount: true }, where: { date: { gte: yearStart } } }),
   ])
   const output = outputVat._sum.vatTotal || 0

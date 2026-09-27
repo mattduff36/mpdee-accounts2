@@ -79,6 +79,7 @@ type DraftInvoiceRecord = {
   paidAt: Date | null
   cancelledAt: Date | null
   writtenOffAt: Date | null
+  viewHidden?: boolean
 }
 
 export type DraftEditTx = {
@@ -170,7 +171,7 @@ export async function updateDraftInvoice(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceSendLockKey(invoiceId)}))`
 
       const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } })
-      if (!invoice) {
+      if (!invoice || invoice.viewHidden) {
         throw new InvoiceEditError("not_found", "save-failed", "Invoice not found")
       }
       if (invoice.status !== "draft") {

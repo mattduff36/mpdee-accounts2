@@ -119,6 +119,7 @@ model Invoice {
   paidAt        DateTime?
   cancelledAt   DateTime?
   writtenOffAt  DateTime?
+  viewHidden    Boolean       @default(false)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   items         InvoiceItem[]
@@ -131,6 +132,7 @@ model Invoice {
   @@index([status])
   @@index([issueDate])
   @@index([dueDate])
+  @@index([viewHidden])
 }
 
 model InvoiceItem {

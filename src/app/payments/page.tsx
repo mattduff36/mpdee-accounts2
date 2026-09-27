@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visiblePaymentWhere } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { PagedDataTable } from "@/components/PagedDataTable"
@@ -12,6 +13,7 @@ export default async function PaymentsPage({
 }) {
   const sp = await searchParams
   const payments = await prisma.payment.findMany({
+    where: visiblePaymentWhere,
     orderBy: { date: "desc" },
     include: { invoice: { select: { invoiceNumber: true, id: true } }, client: { select: { name: true } } },
   })

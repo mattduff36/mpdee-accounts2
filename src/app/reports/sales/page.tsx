@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { startOfYear } from "@/lib/format"
 
 export default async function SalesReportPage() {
   const yearStart = startOfYear(new Date())
-  const invoices = await prisma.invoice.findMany({ where: { issueDate: { gte: yearStart } }, orderBy: { issueDate: "asc" } })
+  const invoices = await prisma.invoice.findMany({ where: andVisibleInvoice({ issueDate: { gte: yearStart } }), orderBy: { issueDate: "asc" } })
   const monthly: Record<string, { issued: number; paid: number }> = {}
   for (const inv of invoices) {
     const key = inv.issueDate.toISOString().slice(0, 7)

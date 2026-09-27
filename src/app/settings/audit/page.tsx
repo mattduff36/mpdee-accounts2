@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visibleAuditWhere } from "@/lib/invoice-visibility"
 import { formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { PagedDataTable } from "@/components/PagedDataTable"
@@ -11,6 +12,7 @@ export default async function AuditPage({
 }) {
   const sp = await searchParams
   const logs = await prisma.auditLog.findMany({
+    where: visibleAuditWhere,
     orderBy: { createdAt: "desc" },
     include: { user: { select: { name: true, email: true } } },
   })

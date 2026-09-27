@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice, visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -22,11 +23,11 @@ async function getClients(search?: string, status?: string) {
   const clients = await prisma.client.findMany({
     where,
     orderBy: { name: "asc" },
-    include: { _count: { select: { invoices: true } } },
+    include: { _count: { select: { invoices: { where: visibleInvoiceWhere } } } },
   })
   const invoiceBalances = await prisma.invoice.groupBy({
     by: ["clientId"],
-    where: { status: { in: ["sent", "viewed", "partial", "overdue"] } },
+    where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial", "overdue"] } }),
     _sum: { balanceDue: true },
   })
   const balanceMap = Object.fromEntries(invoiceBalances.map((balance) => [balance.clientId, balance._sum.balanceDue || 0]))

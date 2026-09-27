@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visibleInvoiceOrNull } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate, daysOverdue } from "@/lib/format"
 import { invoiceSendMode, isEligibleMarkPaidStatus } from "@/lib/payments"
 import { PageHeader } from "@/components/PageHeader"
@@ -12,10 +13,12 @@ import { notFound } from "next/navigation"
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const invoice = await prisma.invoice.findUnique({
-    where: { id },
-    include: { client: true, items: { orderBy: { sortOrder: "asc" } }, payments: { orderBy: { date: "desc" } } },
-  })
+  const invoice = visibleInvoiceOrNull(
+    await prisma.invoice.findUnique({
+      where: { id },
+      include: { client: true, items: { orderBy: { sortOrder: "asc" } }, payments: { orderBy: { date: "desc" } } },
+    })
+  )
   if (!invoice) notFound()
   const sendMode = invoiceSendMode(invoice.status)
   return (

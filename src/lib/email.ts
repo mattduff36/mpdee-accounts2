@@ -1,6 +1,7 @@
 import { Resend } from "resend"
 import { prisma } from "./db"
 import { invoiceSendLockKey } from "./invoice-send-lock"
+import { visibleInvoiceOrNull } from "./invoice-visibility"
 import { generateInvoicePDF } from "./pdf"
 import { renderInvoiceEmail } from "@/emails/invoice-email"
 import { renderPaymentReceivedEmail } from "@/emails/payment-received-email"
@@ -51,10 +52,12 @@ type Claim =
 
 export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean; error?: string }> {
   const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
-  const invoiceForSubject = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
-    include: { client: true, items: true },
-  })
+  const invoiceForSubject = visibleInvoiceOrNull(
+    await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { client: true, items: true },
+    })
+  )
   if (!invoiceForSubject) return { ok: false, error: "Invoice not found" }
   if (!invoiceForSubject.client.email) return { ok: false, error: "Client has no email address" }
 
@@ -73,10 +76,12 @@ export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean
   const claim: Claim = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceSendLockKey(invoiceId)}))`
 
-    const invoice = await tx.invoice.findUnique({
-      where: { id: invoiceId },
-      include: { client: true },
-    })
+    const invoice = visibleInvoiceOrNull(
+      await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { client: true },
+      })
+    )
     if (!invoice) return { kind: "error", error: "Invoice not found" }
     if (!invoice.client.email) return { kind: "error", error: "Client has no email address" }
     if (!["draft", "sent"].includes(invoice.status)) {
@@ -117,10 +122,12 @@ export async function sendInvoiceEmail(invoiceId: string): Promise<{ ok: boolean
   if (claim.kind === "error") return { ok: false, error: claim.error }
   if (claim.kind === "already_sent") return { ok: true }
 
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
-    include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
-  })
+  const invoice = visibleInvoiceOrNull(
+    await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
+    })
+  )
   if (!invoice?.client.email) {
     await prisma.emailLog.update({
       where: { id: claim.pendingId },
@@ -210,10 +217,12 @@ export async function sendPaymentReceivedEmail(
   invoiceId: string,
   options?: { amountPaidPence?: number }
 ): Promise<{ ok: boolean; error?: string }> {
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
-    include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
-  })
+  const invoice = visibleInvoiceOrNull(
+    await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { client: true, items: { orderBy: { sortOrder: "asc" } } },
+    })
+  )
   if (!invoice) return { ok: false, error: "Invoice not found" }
   if (!invoice.client.email) return { ok: false, error: "Client has no email address" }
 

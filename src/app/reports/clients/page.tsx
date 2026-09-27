@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { PagedDataTable } from "@/components/PagedDataTable"
@@ -7,7 +8,7 @@ import { pluralize, sumBy } from "@/lib/monthly-list"
 export default async function ClientRevenuePage() {
   const clients = await prisma.client.findMany({
     where: { isArchived: false },
-    include: { invoices: true },
+    include: { invoices: { where: visibleInvoiceWhere } },
     orderBy: { name: "asc" },
   })
   const data = clients

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { andVisibleInvoice, visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate, startOfMonth, endOfMonth, startOfYear } from "@/lib/format"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { StatusBadge } from "@/components/StatusBadge"
@@ -13,14 +14,14 @@ async function getDashboardData() {
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
 
-  const paidInvoices = await prisma.invoice.aggregate({ _sum: { total: true }, where: { status: "paid", paidAt: { gte: yearStart } } })
-  const unpaidInvoices = await prisma.invoice.aggregate({ _sum: { balanceDue: true }, where: { status: { in: ["sent", "viewed", "partial"] } } })
-  const overdueInvoices = await prisma.invoice.aggregate({ _sum: { balanceDue: true }, where: { status: { in: ["overdue"] } } })
+  const paidInvoices = await prisma.invoice.aggregate({ _sum: { total: true }, where: andVisibleInvoice({ status: "paid", paidAt: { gte: yearStart } }) })
+  const unpaidInvoices = await prisma.invoice.aggregate({ _sum: { balanceDue: true }, where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial"] } }) })
+  const overdueInvoices = await prisma.invoice.aggregate({ _sum: { balanceDue: true }, where: andVisibleInvoice({ status: { in: ["overdue"] } }) })
   const expensesThisMonth = await prisma.expense.aggregate({ _sum: { grossAmount: true }, where: { date: { gte: monthStart, lte: monthEnd } } })
-  const recentInvoices = await prisma.invoice.findMany({ take: 5, orderBy: { createdAt: "desc" }, include: { client: { select: { name: true } } } })
+  const recentInvoices = await prisma.invoice.findMany({ where: visibleInvoiceWhere, take: 5, orderBy: { createdAt: "desc" }, include: { client: { select: { name: true } } } })
   const recentExpenses = await prisma.expense.findMany({ take: 5, orderBy: { createdAt: "desc" }, include: { category: { select: { name: true } } } })
-  const upcomingDue = await prisma.invoice.findMany({ where: { status: { in: ["sent", "viewed", "partial"] }, dueDate: { gte: now } }, take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
-  const overdue = await prisma.invoice.findMany({ where: { status: { in: ["sent", "viewed", "partial", "overdue"] }, dueDate: { lt: now } }, take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
+  const upcomingDue = await prisma.invoice.findMany({ where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial"] }, dueDate: { gte: now } }), take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
+  const overdue = await prisma.invoice.findMany({ where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial", "overdue"] }, dueDate: { lt: now } }), take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
   const clientCount = await prisma.client.count({ where: { isArchived: false } })
 
   return {

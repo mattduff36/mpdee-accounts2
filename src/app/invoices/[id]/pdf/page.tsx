@@ -10,9 +10,25 @@ export default function InvoicePDFPage() {
   const params = useParams()
   const [invoice, setInvoice] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
+  const [missing, setMissing] = useState(false)
   useEffect(() => {
-    fetch(`/api/invoices/${params.id}`).then(r => r.json()).then(setInvoice)
-    fetch("/api/settings").then(r => r.json()).then(setCompany)
+    let cancelled = false
+    fetch(`/api/invoices/${params.id}`).then(async (response) => {
+      if (cancelled) return
+      if (!response.ok) {
+        setInvoice(null)
+        setMissing(true)
+        return
+      }
+      setMissing(false)
+      setInvoice(await response.json())
+    })
+    fetch("/api/settings").then(r => r.json()).then((data) => {
+      if (!cancelled) setCompany(data)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [params.id])
   function generatePDF() {
     if (!invoice || !company) return
@@ -50,6 +66,7 @@ export default function InvoicePDFPage() {
     if (invoice.notes) { doc.text("Notes:", 14, finalY + 70); doc.text(invoice.notes, 14, finalY + 75) }
     doc.save(`${invoice.invoiceNumber}.pdf`)
   }
+  if (missing) return <div className="p-8 text-center">Invoice not found</div>
   if (!invoice) return <div className="p-8 text-center">Loading...</div>
   return <div className="space-y-4"><h1 className="text-2xl font-bold">Invoice PDF</h1><Button onClick={generatePDF}>Download PDF</Button>
     <div className="rounded-lg border bg-white p-8 space-y-4">

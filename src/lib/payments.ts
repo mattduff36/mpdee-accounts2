@@ -27,6 +27,7 @@ export type MarkPaidInvoice = InvoiceBalances & {
   clientId: string
   status: string
   paidAt?: Date | null
+  viewHidden?: boolean
 }
 
 export type MarkPaidTx = {
@@ -84,7 +85,7 @@ export async function markInvoicePaid(invoiceId: string, deps: MarkInvoicePaidDe
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-mark-paid:${invoiceId}`}))`
 
     const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } })
-    if (!invoice) throw new MarkPaidError("not_found", "Invoice not found")
+    if (!invoice || invoice.viewHidden) throw new MarkPaidError("not_found", "Invoice not found")
     if (!isEligibleMarkPaidStatus(invoice.status)) {
       throw new MarkPaidError(
         "conflict",

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visibleInvoiceOrNull } from "@/lib/invoice-visibility"
 import { notFound, redirect } from "next/navigation"
 import { NewInvoiceForm } from "@/components/NewInvoiceForm"
 import { blankInvoiceLineItem } from "@/components/InvoiceLineItems"
@@ -20,10 +21,12 @@ export default async function EditInvoicePage({
 }) {
   const { id } = await params
   const { error } = await searchParams
-  const invoice = await prisma.invoice.findUnique({
-    where: { id },
-    include: { items: { orderBy: { sortOrder: "asc" } } },
-  })
+  const invoice = visibleInvoiceOrNull(
+    await prisma.invoice.findUnique({
+      where: { id },
+      include: { items: { orderBy: { sortOrder: "asc" } } },
+    })
+  )
   if (!invoice) notFound()
   if (invoice.status !== "draft") redirect(`/invoices/${id}`)
 

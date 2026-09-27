@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { visibleInvoiceWhere, visiblePaymentWhere } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusBadge } from "@/components/StatusBadge"
@@ -20,7 +21,10 @@ export default async function ClientDetailPage({
   const sp = await searchParams
   const client = await prisma.client.findUnique({
     where: { id },
-    include: { invoices: { orderBy: { createdAt: "desc" } }, payments: { orderBy: { date: "desc" } } },
+    include: {
+      invoices: { where: visibleInvoiceWhere, orderBy: { createdAt: "desc" } },
+      payments: { where: visiblePaymentWhere, orderBy: { date: "desc" } },
+    },
   })
   if (!client) notFound()
   const totalInvoiced = client.invoices.reduce((sum, invoice) => sum + invoice.total, 0)
