@@ -13,3 +13,8 @@
 .DS_Store
 .vercel
 *.tsbuildinfo
+
+# Cost collector exports are private account metadata, never source files.
+/costs-outbox/
+/costs-exports/
+*.costs-private.json

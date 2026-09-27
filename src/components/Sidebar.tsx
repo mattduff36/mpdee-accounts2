@@ -36,6 +36,7 @@ const navSections: NavSection[] = [
     label: 'Operations',
     items: [
       { href: '/expenses', label: 'Expenses', icon: Receipt },
+      { href: '/costs', label: 'Project Costs', icon: BarChart3 },
       { href: '/mileage', label: 'Mileage', icon: Route },
       { href: '/bank-import', label: 'Bank Import', icon: Landmark },
       { href: '/reports', label: 'Reports', icon: BarChart3 },

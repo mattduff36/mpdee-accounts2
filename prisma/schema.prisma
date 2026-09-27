@@ -91,6 +91,8 @@ model Client {
   payments            Payment[]
   creditNotes         CreditNote[]
   recurringInvoices   RecurringInvoice[]
+  costProjects        CostProject[]
+  costPolicies        CostPolicy[]
 
   @@index([name])
   @@index([isArchived])
@@ -430,4 +432,97 @@ model ReminderLog {
 
   @@index([invoiceId])
   @@index([sentAt])
+}
+
+// Source amounts are integer 1/10,000,000 native-currency units, never rounded per request.
+// Accounting documents continue to store GBP integer pence.
+model CostProject {
+  id        String @id @default(cuid())
+  slug      String @unique
+  name      String
+  clientId  String?
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  repository String?
+  archived  Boolean @default(false)
+  createdAt DateTime @default(now())
+  mappings  CostProjectMapping[]
+  policies  CostPolicy[]
+  events    CostUsageEvent[]
+}
+
+model CostProjectMapping {
+  id        String @id @default(cuid())
+  type      String
+  value     String
+  projectId String
+  project   CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@unique([type, value])
+}
+
+model CostPolicy {
+  id          String @id @default(cuid())
+  scopeKey    String
+  projectId   String?
+  project     CostProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  clientId    String?
+  client      Client? @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  effectiveAt DateTime
+  billable    Boolean @default(false)
+  includedBaseBps Int @default(5000)
+  markupBps   Int @default(0)
+  infrastructureMarkupBps Int @default(0)
+  createdAt   DateTime @default(now())
+  @@unique([scopeKey, effectiveAt])
+}
+
+model CostUsageEvent {
+  id          String @id @default(cuid())
+  provider    String
+  accountRef  String
+  sourceKey   String
+  occurredAt  DateTime
+  projectId   String?
+  project     CostProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  attribution String @default("unassigned")
+  manualAssignment Boolean @default(false)
+  workspaceRef String?
+  conversationId String?
+  resourceRef String?
+  model       String?
+  createdAt   DateTime @default(now())
+  revisions   CostUsageRevision[]
+  @@unique([provider, accountRef, sourceKey])
+  @@index([projectId, occurredAt])
+  @@index([occurredAt])
+}
+
+model CostUsageRevision {
+  id           String @id @default(cuid())
+  eventId      String
+  event        CostUsageEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  revision     Int
+  checksum     String
+  funding      String
+  nominalUnits BigInt?
+  providerUnits BigInt?
+  currency     String
+  fxGbp        Decimal? @db.Decimal(20, 8)
+  quality      String
+  reason       String?
+  evidence     Json
+  createdAt    DateTime @default(now())
+  @@unique([eventId, revision])
+}
+
+model CostImportRun {
+  id          String @id @default(cuid())
+  provider    String
+  accountRef  String
+  received    Int
+  added       Int
+  revised     Int
+  duplicate   Int
+  unassigned  Int
+  quality     String
+  createdAt   DateTime @default(now())
 }
