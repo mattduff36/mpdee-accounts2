@@ -15,6 +15,12 @@ function redirectOrigin(request: Request): string {
 
 export async function POST(request: Request) {
   const cookieStore = await cookies()
-  cookieStore.delete("session")
-  return NextResponse.redirect(new URL("/login", redirectOrigin(request)))
+  cookieStore.set("session", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  })
+  return NextResponse.redirect(new URL("/", redirectOrigin(request)), 303)
 }
