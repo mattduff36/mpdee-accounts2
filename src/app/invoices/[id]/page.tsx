@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { visibleInvoiceOrNull } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate, daysOverdue } from "@/lib/format"
 import { invoiceSendMode, isEligibleMarkPaidStatus } from "@/lib/payments"
@@ -12,6 +13,8 @@ import { Download, Pencil } from "lucide-react"
 import { notFound } from "next/navigation"
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const { id } = await params
   const invoice = visibleInvoiceOrNull(
     await prisma.invoice.findUnique({
@@ -25,11 +28,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     <div className="space-y-6 max-w-4xl">
       <PageHeader title={`Invoice ${invoice.invoiceNumber}`}>
         <div className="flex gap-1 flex-wrap">
-          {invoice.status === "draft" && (
+          {writable && invoice.status === "draft" && (
             <IconAction title="Edit Invoice" icon={Pencil} href={`/invoices/${id}/edit`} />
           )}
-          {sendMode && <SendInvoiceButton invoiceId={id} mode={sendMode} />}
-          {isEligibleMarkPaidStatus(invoice.status) && <MarkAsPaidButton invoiceId={id} />}
+          {writable && sendMode && <SendInvoiceButton invoiceId={id} mode={sendMode} />}
+          {writable && isEligibleMarkPaidStatus(invoice.status) && <MarkAsPaidButton invoiceId={id} />}
           <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${id}/pdf`} external />
         </div>
       </PageHeader>

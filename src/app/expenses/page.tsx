@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,8 @@ export default async function ExpensesPage({
 }: {
   searchParams: Promise<{ month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const expenses = await prisma.expense.findMany({
     orderBy: { date: "desc" },
@@ -30,9 +33,9 @@ export default async function ExpensesPage({
   return (
     <div className="space-y-4">
       <PageHeader title="Expenses" description="Track business expenses">
-        <Link href="/expenses/new">
+        {writable && <Link href="/expenses/new">
           <Button>New Expense</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-lg border bg-white p-4">

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth, requireWrite } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import { PagedDataTable } from "@/components/PagedDataTable"
@@ -10,6 +11,8 @@ export default async function PreviewPage({
 }: {
   searchParams: Promise<{ importId: string; month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const { importId, month } = await searchParams
   const transactions = await prisma.bankTransaction.findMany({
     where: { bankImportId: importId },
@@ -17,6 +20,7 @@ export default async function PreviewPage({
   })
   async function updateStatus(formData: FormData) {
     "use server"
+    await requireWrite()
     const id = String(formData.get("id"))
     const status = String(formData.get("status"))
     await prisma.bankTransaction.update({ where: { id }, data: { status, matchedAt: new Date() } })
@@ -34,7 +38,7 @@ export default async function PreviewPage({
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Import Preview</h1>
-      <p className="text-sm text-gray-500">Review and categorise each transaction. Click an action to process.</p>
+      <p className="text-sm text-gray-500">{writable ? "Review and categorise each transaction. Click an action to process." : "Review imported transactions."}</p>
       <PagedDataTable
         path="/bank-import/preview"
         query={{ importId }}
@@ -78,7 +82,7 @@ export default async function PreviewPage({
               <span className="text-xs capitalize">{transaction.status}</span>
             </td>
             <td className="px-4 py-3">
-              <form action={updateStatus} className="flex gap-1">
+              {writable && <form action={updateStatus} className="flex gap-1">
                 <input type="hidden" name="id" value={transaction.id} />
                 <Button type="submit" name="status" value="expense" variant="secondary" size="sm">
                   Expense
@@ -92,7 +96,7 @@ export default async function PreviewPage({
                 <Button type="submit" name="status" value="ignored" variant="ghost" size="sm">
                   Ignore
                 </Button>
-              </form>
+              </form>}
             </td>
           </tr>
         ))}

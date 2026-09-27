@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,8 @@ export default async function QuotesPage({
 }: {
   searchParams: Promise<{ month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const quotes = await prisma.quote.findMany({ orderBy: { createdAt: "desc" }, include: { client: { select: { name: true } } } })
   const groups = groupByMonth(quotes, (quote) => quote.issueDate)
@@ -27,9 +30,9 @@ export default async function QuotesPage({
   return (
     <div className="space-y-4">
       <PageHeader title="Quotes" description="Manage quotes and estimates">
-        <Link href="/quotes/new">
+        {writable && <Link href="/quotes/new">
           <Button>New Quote</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <PagedDataTable
         path="/quotes"

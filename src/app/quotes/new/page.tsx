@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -6,9 +7,11 @@ import { Input } from "@/components/ui/input"
 import { generateQuoteNumber, parseCurrency } from "@/lib/format"
 
 export default async function NewQuotePage() {
+  await requireWrite()
   const clients = await prisma.client.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
   async function createQuote(formData: FormData) {
     "use server"
+    await requireWrite()
     const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
     const prefix = settings?.invoicePrefix || "INV"
     const nextNum = settings?.nextInvoiceNumber || 1

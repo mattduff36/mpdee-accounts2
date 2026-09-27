@@ -7,6 +7,20 @@ import bcrypt from "bcryptjs"
 const SESSION_COOKIE = "session"
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7
 
+export const ADMIN_ROLE = "admin"
+export const READONLY_ROLE = "readonly"
+
+export function canWrite(user: { role: string } | null | undefined): boolean {
+  return user?.role === ADMIN_ROLE
+}
+
+export class WriteAccessError extends Error {
+  constructor() {
+    super("Read-only access")
+    this.name = "WriteAccessError"
+  }
+}
+
 function getSessionSecret(): string {
   const secret = process.env.SESSION_SECRET
   if (!secret || secret.length < 32) {
@@ -76,6 +90,20 @@ export async function requireAuth() {
 export async function requireApiAuth() {
   const user = await getSessionUser()
   if (!user) throw new Error("Authentication required")
+  return user
+}
+
+export async function requireWrite() {
+  const user = await getSessionUser()
+  if (!user) redirect("/login")
+  if (!canWrite(user)) redirect("/dashboard")
+  return user
+}
+
+export async function requireApiWrite() {
+  const user = await getSessionUser()
+  if (!user) throw new Error("Authentication required")
+  if (!canWrite(user)) throw new WriteAccessError()
   return user
 }
 

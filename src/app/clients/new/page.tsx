@@ -1,12 +1,15 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-export default function NewClientPage() {
+export default async function NewClientPage() {
+  await requireWrite()
   async function createClient(formData: FormData) {
     "use server"
+    await requireWrite()
     await prisma.client.create({ data: {
       name: String(formData.get("name")),
       companyName: String(formData.get("companyName") || ""),

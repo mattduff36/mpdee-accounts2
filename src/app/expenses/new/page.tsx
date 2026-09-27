@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -7,10 +8,12 @@ import { EXPENSE_PAYMENT_METHODS } from "@/lib/constants"
 import { parseCurrency } from "@/lib/format"
 
 export default async function NewExpensePage() {
+  await requireWrite()
   const categories = await prisma.expenseCategory.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
   const clients = await prisma.client.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
   async function createExpense(formData: FormData) {
     "use server"
+    await requireWrite()
     const netAmount = parseCurrency(String(formData.get("netAmount")))
     const vatRate = Number(formData.get("vatRate") || 20)
     const vatAmount = vatRate > 0 ? Math.round(netAmount * (vatRate / 100)) : 0

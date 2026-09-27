@@ -51,9 +51,15 @@ function isNavItemActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-export function Sidebar() {
+export function Sidebar({ canWrite }: { canWrite: boolean }) {
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const sections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => canWrite || item.href !== "/settings"),
+    }))
+    .filter((section) => section.items.length > 0)
 
   return <>
     <button
@@ -83,7 +89,7 @@ export function Sidebar() {
         </div>
 
         <nav className="flex-1 space-y-7 overflow-y-auto px-4 py-5">
-          {navSections.map(section => (
+          {sections.map(section => (
             <div key={section.label} className="space-y-2">
               <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{section.label}</p>
               <div className="space-y-1">

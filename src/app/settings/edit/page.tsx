@@ -1,11 +1,11 @@
 import { revalidatePath } from "next/cache"
 import { prisma } from "@/lib/db"
-import { requireAuth } from "@/lib/auth"
+import { requireWrite } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { InvoiceHideEditor } from "./invoice-hide-editor"
 
 export default async function SettingsEditPage() {
-  await requireAuth()
+  await requireWrite()
   const invoices = await prisma.invoice.findMany({
     orderBy: { issueDate: "desc" },
     include: { client: { select: { name: true } } },
@@ -13,7 +13,7 @@ export default async function SettingsEditPage() {
 
   async function saveHidden(formData: FormData) {
     "use server"
-    await requireAuth()
+    await requireWrite()
     const listed = formData.getAll("invoiceId").map(String)
     const hidden = new Set(formData.getAll("hidden").map(String))
     const hideIds = listed.filter((id) => hidden.has(id))
@@ -32,7 +32,7 @@ export default async function SettingsEditPage() {
 
   async function clearHidden() {
     "use server"
-    await requireAuth()
+    await requireWrite()
     await prisma.invoice.updateMany({ data: { viewHidden: false } })
     revalidatePath("/", "layout")
   }

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { visibleInvoiceWhere, visiblePaymentWhere } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
@@ -17,6 +18,8 @@ export default async function ClientDetailPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const { id } = await params
   const sp = await searchParams
   const client = await prisma.client.findUnique({
@@ -44,7 +47,7 @@ export default async function ClientDetailPage({
   return (
     <div className="space-y-6">
       <PageHeader title={client.name} description={client.companyName || undefined}>
-        <IconAction title="Edit Client" icon={Pencil} href={`/clients/${id}/edit`} />
+        {writable && <IconAction title="Edit Client" icon={Pencil} href={`/clients/${id}/edit`} />}
       </PageHeader>
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

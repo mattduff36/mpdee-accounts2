@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,8 @@ export default async function MileagePage({
 }: {
   searchParams: Promise<{ month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const records = await prisma.mileageExpense.findMany({ orderBy: { date: "desc" } })
   const groups = groupByMonth(records, (record) => record.date)
@@ -26,9 +29,9 @@ export default async function MileagePage({
   return (
     <div className="space-y-4">
       <PageHeader title="Mileage" description="HMRC-compliant mileage tracking">
-        <Link href="/mileage/new">
+        {writable && <Link href="/mileage/new">
           <Button>Log Mileage</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border bg-white p-4">

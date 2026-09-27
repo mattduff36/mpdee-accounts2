@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth, requireWrite } from "@/lib/auth"
 import { formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -12,10 +13,13 @@ export default async function BankImportPage({
 }: {
   searchParams: Promise<{ month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const imports = await prisma.bankImport.findMany({ orderBy: { importDate: "desc" } })
   async function uploadCSV(formData: FormData) {
     "use server"
+    await requireWrite()
     const file = formData.get("file") as File
     if (!file) return
     const text = await file.text()
@@ -53,7 +57,7 @@ export default async function BankImportPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Bank Import" description="Import and categorise bank statement CSV files" />
-      <Card>
+      {writable && <Card>
         <CardHeader>
           <CardTitle>Upload CSV</CardTitle>
         </CardHeader>
@@ -72,7 +76,7 @@ export default async function BankImportPage({
             <Button type="submit">Upload & Preview</Button>
           </form>
         </CardContent>
-      </Card>
+      </Card>}
       <h2 className="text-lg font-semibold">Import History</h2>
       <PagedDataTable
         path="/bank-import"

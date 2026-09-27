@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -7,9 +8,11 @@ import { RECURRING_FREQUENCIES } from "@/lib/constants"
 import { parseCurrency } from "@/lib/format"
 
 export default async function NewRecurringPage() {
+  await requireWrite()
   const clients = await prisma.client.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
   async function createTemplate(formData: FormData) {
     "use server"
+    await requireWrite()
     const descriptions = formData.getAll("description[]") as string[]
     const quantities = formData.getAll("quantity[]") as string[]
     const unitPrices = formData.getAll("unitPrice[]") as string[]

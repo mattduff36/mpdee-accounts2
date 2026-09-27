@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { andVisibleInvoice, visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import { formatCurrency, formatDate, startOfMonth, endOfMonth, startOfYear } from "@/lib/format"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -72,6 +73,8 @@ function MetricCard({ title, value, icon: Icon, tone }: MetricCardProps) {
 }
 
 export default async function DashboardPage() {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const data = await getDashboardData()
   return <div className="space-y-6">
     <PageHeader title="Dashboard" description="Track cashflow, open invoices, and the next accounting actions at a glance." />
@@ -97,11 +100,11 @@ export default async function DashboardPage() {
         {data.overdueList.length === 0 ? <p className="text-sm text-slate-500">No overdue invoices</p> : <div className="space-y-2">{data.overdueList.map(inv => <div key={inv.id} className="flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 p-3"><div><p className="text-sm font-medium text-slate-900">{inv.invoiceNumber}</p><p className="text-xs text-slate-500">{inv.client.name} - Due {formatDate(inv.dueDate)}</p></div><p className="text-sm font-medium text-rose-700">{formatCurrency(inv.balanceDue)}</p></div>)}</div>}
       </CardContent></Card>
     </div>
-    <div className="flex flex-wrap gap-2">
+    {writable && <div className="flex flex-wrap gap-2">
       <Link href="/invoices/new"><Button><FileText className="mr-2 h-4 w-4" />New Invoice</Button></Link>
       <Link href="/clients/new"><Button variant="secondary"><Users className="mr-2 h-4 w-4" />New Client</Button></Link>
       <Link href="/expenses/new"><Button variant="secondary"><Receipt className="mr-2 h-4 w-4" />New Expense</Button></Link>
       <Link href="/bank-import"><Button variant="secondary"><ArrowRight className="mr-2 h-4 w-4" />Import Bank</Button></Link>
-    </div>
+    </div>}
   </div>
 }

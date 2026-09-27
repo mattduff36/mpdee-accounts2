@@ -5,6 +5,7 @@ import { NewInvoiceForm } from "@/components/NewInvoiceForm"
 import { blankInvoiceLineItem } from "@/components/InvoiceLineItems"
 import { formatIsoDateOnly } from "@/lib/invoice-date"
 import { poundsInputFromPence, quantityInputFromValue } from "@/lib/invoice-items"
+import { requireWrite } from "@/lib/auth"
 import {
   InvoiceEditError,
   draftInvoiceInputFromForm,
@@ -19,6 +20,7 @@ export default async function EditInvoicePage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ error?: string }>
 }) {
+  await requireWrite()
   const { id } = await params
   const { error } = await searchParams
   const invoice = visibleInvoiceOrNull(
@@ -37,6 +39,7 @@ export default async function EditInvoicePage({
 
   async function saveDraft(formData: FormData) {
     "use server"
+    await requireWrite()
     try {
       await updateDraftInvoice(id, draftInvoiceInputFromForm(formData))
     } catch (caught) {

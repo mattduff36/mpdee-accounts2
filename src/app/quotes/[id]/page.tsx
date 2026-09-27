@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth, requireWrite } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusBadge } from "@/components/StatusBadge"
@@ -7,12 +8,20 @@ import { FileInput, Send } from "lucide-react"
 import { notFound, redirect } from "next/navigation"
 
 export default async function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const { id } = await params
   const quote = await prisma.quote.findUnique({ where: { id }, include: { client: true, items: true } })
   if (!quote) notFound()
   const q = quote!
+  async function markQuoteSent() {
+    "use server"
+    await requireWrite()
+    await prisma.quote.update({ where: { id }, data: { status: "sent" } })
+  }
   async function convertToInvoice() {
     "use server"
+    await requireWrite()
     const { createInvoiceWithAllocatedNumber } = await import("@/lib/invoice-number")
     const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
     const prefix = settings?.invoicePrefix || process.env.INVOICE_PREFIX || "MPD"
@@ -43,8 +52,8 @@ export default async function QuoteDetailPage({ params }: { params: Promise<{ id
   }
   return <div className="space-y-6 max-w-4xl">
     <PageHeader title={`Quote ${quote.quoteNumber}`}>
-      {quote.status === "draft" && <form action={async () => { "use server"; await prisma.quote.update({ where: { id }, data: { status: "sent" } }) }}><IconAction title="Mark as Sent" icon={Send} tone="green" type="submit" /></form>}
-      {quote.status !== "converted" && <form action={convertToInvoice}><IconAction title="Convert to Invoice" icon={FileInput} tone="blue" type="submit" /></form>}
+      {writable && quote.status === "draft" && <form action={markQuoteSent}><IconAction title="Mark as Sent" icon={Send} tone="green" type="submit" /></form>}
+      {writable && quote.status !== "converted" && <form action={convertToInvoice}><IconAction title="Convert to Invoice" icon={FileInput} tone="blue" type="submit" /></form>}
     </PageHeader>
     <div className="grid gap-4 md:grid-cols-3">
       <div className="rounded-lg border bg-white p-4"><p className="text-sm text-gray-500">Total</p><p className="text-2xl font-bold">{formatCurrency(q.total)}</p></div>

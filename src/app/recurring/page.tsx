@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -7,6 +8,8 @@ import { pluralize, sumBy } from "@/lib/monthly-list"
 import Link from "next/link"
 
 export default async function RecurringPage() {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const templates = await prisma.recurringInvoice.findMany({
     orderBy: { createdAt: "desc" },
     include: { client: { select: { name: true } } },
@@ -15,9 +18,9 @@ export default async function RecurringPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Recurring Invoices" description="Automated billing templates">
-        <Link href="/recurring/new">
+        {writable && <Link href="/recurring/new">
           <Button>New Template</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <PagedDataTable
         empty="No recurring templates"

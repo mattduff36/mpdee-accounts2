@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { NewInvoiceForm } from "@/components/NewInvoiceForm"
 import { parseCurrency } from "@/lib/format"
@@ -6,11 +7,13 @@ import { calculateInvoiceDraftLine } from "@/lib/invoice-items"
 import { createInvoiceWithAllocatedNumber } from "@/lib/invoice-number"
 
 export default async function NewInvoicePage() {
+  await requireWrite()
   const clients = await prisma.client.findMany({ where: { isArchived: false }, orderBy: { name: "asc" } })
   const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
 
   async function createInvoice(formData: FormData) {
     "use server"
+    await requireWrite()
     const clientId = String(formData.get("clientId"))
     const prefix = settings?.invoicePrefix || process.env.INVOICE_PREFIX || "MPD"
     const terms = Number(formData.get("paymentTerms") || 30)

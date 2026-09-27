@@ -1,15 +1,18 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect, notFound } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 export default async function EditClientPage({ params }: { params: Promise<{ id: string }> }) {
+  await requireWrite()
   const { id } = await params
   const client = await prisma.client.findUnique({ where: { id } })
   if (!client) notFound()
   async function updateClient(formData: FormData) {
     "use server"
+    await requireWrite()
     await prisma.client.update({ where: { id }, data: {
       name: String(formData.get("name")),
       companyName: String(formData.get("companyName") || ""),

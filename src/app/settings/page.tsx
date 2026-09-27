@@ -1,13 +1,16 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 
 export default async function SettingsPage() {
+  await requireWrite()
   const settings = await prisma.companySettings.findUnique({ where: { id: "default" } })
   async function updateSettings(formData: FormData) {
     "use server"
+    await requireWrite()
     const data = {
       businessName: String(formData.get("businessName")),
       tradingName: String(formData.get("tradingName") || ""),

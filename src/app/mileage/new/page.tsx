@@ -1,12 +1,15 @@
 import { prisma } from "@/lib/db"
+import { requireWrite } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import { PageHeader } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 export default async function NewMileagePage() {
+  await requireWrite()
   async function createMileage(formData: FormData) {
     "use server"
+    await requireWrite()
     const miles = parseFloat(String(formData.get("miles")))
     const ratePerMile = parseFloat(String(formData.get("ratePerMile") || "0.45"))
     const amount = Math.round(miles * ratePerMile)

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { andVisibleInvoice, visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import { formatCurrency } from "@/lib/format"
 import { PageHeader } from "@/components/PageHeader"
@@ -39,15 +40,17 @@ export default async function ClientsPage({
 }: {
   searchParams: Promise<{ search?: string; status?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const clients = await getClients(sp.search, sp.status)
 
   return (
     <div className="space-y-4">
       <PageHeader title="Clients" description="Manage your clients and their billing information">
-        <Link href="/clients/new">
+        {writable && <Link href="/clients/new">
           <Button>New Client</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <form className="flex gap-2">
         <div className="relative flex-1 max-w-sm">
@@ -112,7 +115,7 @@ export default async function ClientsPage({
               {client.isArchived ? <StatusBadge status="cancelled" /> : <StatusBadge status="paid" />}
             </td>
             <td className="px-4 py-3 text-right">
-              <IconAction title="Edit Client" icon={Pencil} href={`/clients/${client.id}/edit`} />
+              {writable && <IconAction title="Edit Client" icon={Pencil} href={`/clients/${client.id}/edit`} />}
             </td>
           </tr>
         ))}

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { canWrite, requireAuth } from "@/lib/auth"
 import { visibleInvoiceWhere } from "@/lib/invoice-visibility"
 import type { Prisma } from "@prisma/client"
 import { formatCurrency, formatDate } from "@/lib/format"
@@ -34,6 +35,8 @@ export default async function InvoicesPage({
 }: {
   searchParams: Promise<{ status?: string; search?: string; month?: string }>
 }) {
+  const user = await requireAuth()
+  const writable = canWrite(user)
   const sp = await searchParams
   const invoices = await getInvoices(sp.status, sp.search)
   const groups = groupByMonth(invoices, (invoice) => invoice.issueDate)
@@ -48,9 +51,9 @@ export default async function InvoicesPage({
   return (
     <div className="space-y-4">
       <PageHeader title="Invoices" description="Manage invoices and track payments">
-        <Link href="/invoices/new">
+        {writable && <Link href="/invoices/new">
           <Button>New Invoice</Button>
-        </Link>
+        </Link>}
       </PageHeader>
       <form className="flex gap-2">
         {sp.month && <input type="hidden" name="month" value={sp.month} />}
@@ -124,11 +127,11 @@ export default async function InvoicesPage({
               </td>
               <td className="px-4 py-3 text-right">
                 <div className="inline-flex items-center justify-end gap-1">
-                  {inv.status === "draft" && (
+                  {writable && inv.status === "draft" && (
                     <IconAction title="Edit Invoice" icon={Pencil} href={`/invoices/${inv.id}/edit`} />
                   )}
-                  {sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
-                  {isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
+                  {writable && sendMode && <SendInvoiceButton invoiceId={inv.id} mode={sendMode} />}
+                  {writable && isEligibleMarkPaidStatus(inv.status) && <MarkAsPaidButton invoiceId={inv.id} />}
                   <IconAction title="Download PDF" icon={Download} tone="blue" href={`/api/invoices/${inv.id}/pdf`} external />
                   <IconAction title="View Invoice" icon={Eye} href={`/invoices/${inv.id}`} />
                 </div>
