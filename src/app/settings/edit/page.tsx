@@ -2,8 +2,7 @@ import { revalidatePath } from "next/cache"
 import { prisma } from "@/lib/db"
 import { requireAuth } from "@/lib/auth"
 import { formatCurrency, formatDate } from "@/lib/format"
-import { PageHeader } from "@/components/PageHeader"
-import { Button } from "@/components/ui/button"
+import { InvoiceHideEditor } from "./invoice-hide-editor"
 
 export default async function SettingsEditPage() {
   await requireAuth()
@@ -19,10 +18,15 @@ export default async function SettingsEditPage() {
     const hidden = new Set(formData.getAll("hidden").map(String))
     const hideIds = listed.filter((id) => hidden.has(id))
     const showIds = listed.filter((id) => !hidden.has(id))
-    await prisma.$transaction([
-      prisma.invoice.updateMany({ where: { id: { in: showIds } }, data: { viewHidden: false } }),
-      prisma.invoice.updateMany({ where: { id: { in: hideIds } }, data: { viewHidden: true } }),
-    ])
+    const updates = [
+      ...(showIds.length > 0
+        ? [prisma.invoice.updateMany({ where: { id: { in: showIds } }, data: { viewHidden: false } })]
+        : []),
+      ...(hideIds.length > 0
+        ? [prisma.invoice.updateMany({ where: { id: { in: hideIds } }, data: { viewHidden: true } })]
+        : []),
+    ]
+    if (updates.length > 0) await prisma.$transaction(updates)
     revalidatePath("/", "layout")
   }
 
@@ -34,61 +38,17 @@ export default async function SettingsEditPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Edit"
-        description="Tick invoices to hide them from the rest of the app. Hidden invoices stay hidden until you clear them."
-      >
-        <form action={clearHidden}>
-          <Button type="submit" variant="secondary">
-            Clear
-          </Button>
-        </form>
-      </PageHeader>
-      <form action={saveHidden} className="space-y-4">
-        <div className="overflow-x-auto rounded-lg border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-gray-50">
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Hide</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Invoice</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Client</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Issued</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
-                    No invoices
-                  </td>
-                </tr>
-              ) : (
-                invoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-b">
-                    <td className="px-4 py-3">
-                      <input type="hidden" name="invoiceId" value={invoice.id} />
-                      <input
-                        type="checkbox"
-                        name="hidden"
-                        value={invoice.id}
-                        defaultChecked={invoice.viewHidden}
-                        aria-label={`Hide ${invoice.invoiceNumber}`}
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-medium">{invoice.invoiceNumber}</td>
-                    <td className="px-4 py-3 text-gray-500">{invoice.client.name}</td>
-                    <td className="px-4 py-3 text-gray-500">{formatDate(invoice.issueDate)}</td>
-                    <td className="px-4 py-3 text-right font-medium">{formatCurrency(invoice.total)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Button type="submit">Save</Button>
-      </form>
-    </div>
+    <InvoiceHideEditor
+      invoices={invoices.map((invoice) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        clientName: invoice.client.name,
+        issued: formatDate(invoice.issueDate),
+        total: formatCurrency(invoice.total),
+        viewHidden: invoice.viewHidden,
+      }))}
+      saveHidden={saveHidden}
+      clearHidden={clearHidden}
+    />
   )
 }
