@@ -16,10 +16,11 @@ delete env.COSTS_VERCEL_BYPASS_TOKEN;
 const args = [path.join(directory, 'collector', 'collect.mjs'), '--days', '2'];
 if (config.uploadEnabled === true) {
   const runtime = JSON.parse(fs.readFileSync(config.runtimeFile, 'utf8'));
-  if (runtime.ingestUrl !== 'https://mpdee-accounts2-git-preview-mpdees-projects.vercel.app/api/costs/ingest') throw new Error('Unexpected preview upload destination.');
+  if (runtime.ingestUrl !== 'https://accounts.mpdee.info/api/costs/ingest') throw new Error('Unexpected production upload destination.');
   env.COSTS_INGEST_URL = runtime.ingestUrl;
   env.COSTS_INGEST_TOKEN = runtime.ingestToken;
-  if (runtime.vercelBypassToken) env.COSTS_VERCEL_BYPASS_TOKEN = runtime.vercelBypassToken;
+  // Production uploads use only the dedicated Accounts ingestion credential.
+  // Never forward a retired preview protection credential.
   args.push('--upload');
 }
 fs.writeFileSync(logFile, JSON.stringify({ startedAt, state:'running', uploadEnabled:config.uploadEnabled === true }));
