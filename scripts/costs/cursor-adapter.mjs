@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { retryTransient } from "./reliability.mjs";
 
 export const DASHBOARD_ORIGIN = "https://cursor.com";
 export const EVENTS_ENDPOINT =
@@ -43,33 +44,44 @@ export function readCursorCredentials() {
 }
 
 export async function postJson(url, body, cookie) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookie,
-        Origin: DASHBOARD_ORIGIN,
-        Referer: `${DASHBOARD_ORIGIN}/dashboard`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      redirect: "manual",
-    });
-    if ([307, 401, 403].includes(response.status)) {
-      throw new Error("Cursor session is not authorised; sign in to Cursor and retry.");
+  return retryTransient(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      let response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: cookie,
+            Origin: DASHBOARD_ORIGIN,
+            Referer: `${DASHBOARD_ORIGIN}/dashboard`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+          redirect: "manual",
+        });
+      } catch {
+        const error = new Error("Cursor dashboard request failed or timed out.");
+        error.transient = true;
+        throw error;
+      }
+      if ([307, 401, 403].includes(response.status)) {
+        throw new Error("Cursor session is not authorised; sign in to Cursor and retry.");
+      }
+      if (!response.ok) {
+        const error = new Error(`Cursor dashboard returned ${response.status}.`);
+        error.transient = response.status === 429 || response.status >= 500;
+        throw error;
+      }
+      try { return await response.json(); }
+      catch { throw new Error('Cursor dashboard response was not valid JSON.'); }
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) {
-      throw new Error(`Cursor dashboard returned ${response.status}.`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
-
 export function buildConversationProjectIndex() {
   const root = path.join(homedir(), ".cursor", "projects");
   const index = new Map();

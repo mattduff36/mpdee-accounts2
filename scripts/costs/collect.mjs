@@ -1,65 +1,83 @@
 #!/usr/bin/env node
 /** Node 22.13+. Local Cursor auth is never written to output or uploaded. */
-import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCursorCredentials, buildConversationProjectIndex, postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
+import { sendUpload } from './upload.mjs';
+import { sanitizeCursorEvent } from './sanitize.mjs';
+import { fetchCompleteWindow } from './collection.mjs';
+import { acquireProcessLock, collectThenFlush, collectionWindows, checkpointAfterBackfill, DAY_MS, flushOutbox, loadCheckpoint, parseBackfillRange, parseIngestEndpoint, saveCheckpoint, saveWindowPayload } from './reliability.mjs';
 
-const fields = ['timestamp','model','conversationId','kind','isTokenBasedCall','chargedCents','usageBasedCosts','cursorTokenFee'];
-export function sanitize(event, index) {
-  const result = Object.fromEntries(fields.filter(k => event[k] !== undefined).map(k => [k,event[k]]));
-  if (event.tokenUsage) result.tokenUsage = Object.fromEntries(['inputTokens','outputTokens','cacheReadTokens','cacheWriteTokens','totalCents'].filter(k => event.tokenUsage[k] !== undefined).map(k => [k,event.tokenUsage[k]]));
-  const workspace = index.get(event.conversationId);
-  if (workspace) result.workspaceRef = workspace;
-  return result;
+export { sanitizeCursorEvent as sanitize };
+
+async function collect({ credentials, directory, days, backfill }) {
+  const index = buildConversationProjectIndex();
+  const checkpoint = loadCheckpoint(directory, credentials.providerAccountRef);
+  const now = Date.now();
+  const windows = collectionWindows({ checkpoint, initialDays: days, now, backfill });
+  if (checkpoint === null && !backfill) {
+    const firstFrom = windows[0]?.from ?? Math.floor(now / DAY_MS) * DAY_MS;
+    saveCheckpoint(directory, credentials.providerAccountRef, firstFrom);
+  }
+  if (!windows.length) console.log('Local Cursor collection checkpoint is current.');
+  for (const { from, to } of windows) {
+    const fetched = await fetchCompleteWindow({ from, to, now, cookie:credentials.cookie,
+      postJson: (request, cookie) => postJson(EVENTS_ENDPOINT, request, cookie) });
+    const events = fetched.events;
+    const quality = fetched.quality;
+    const payload={version:'mpdee-costs-v1',provider:'cursor',accountRef:credentials.providerAccountRef,quality,events:events.map(e=>sanitizeCursorEvent(e,index))};
+    const body=JSON.stringify(payload,null,2);
+    if (Buffer.byteLength(body)>3_000_000) throw new Error('Daily payload exceeds 3 MB. Use a reviewed smaller window before importing.');
+    const file = saveWindowPayload({ directory, accountRef:credentials.providerAccountRef, from, complete:quality === 'complete', body });
+    console.log(`${new Date(from).toISOString()} — ${new Date(to).toISOString()}: ${events.length} events, ${quality}. Saved locally.`);
+    if (quality!=='complete') throw new Error('Incomplete pagination or inconsistent count. File saved for review, checkpoint not advanced.');
+    if (!backfill && to <= Math.floor(now / DAY_MS) * DAY_MS) saveCheckpoint(directory, credentials.providerAccountRef, to);
+  }
+  if (backfill) {
+    const nextCheckpoint = checkpointAfterBackfill({ checkpoint, backfill, now });
+    if (nextCheckpoint !== null && nextCheckpoint !== checkpoint) saveCheckpoint(directory, credentials.providerAccountRef, nextCheckpoint);
+  }
 }
+
 async function main() {
   const args = process.argv.slice(2);
-  const daysAt = args.indexOf('--days');
-  const days = daysAt < 0 ? 2 : Number(args[daysAt+1]);
+  const valueFor = flag => { const at = args.indexOf(flag); return at < 0 ? null : args[at + 1]; };
+  const daysValue = valueFor('--days');
+  const days = daysValue === null ? 2 : Number(daysValue);
   if (!Number.isInteger(days) || days < 1 || days > 45) throw new Error('Use --days between 1 and 45');
-  const upload = args.includes('--upload');
-  let endpoint;
+  const flushOnly = args.includes('--flush');
+  const upload = args.includes('--upload') || flushOnly;
+  const fromText = valueFor('--from'), toText = valueFor('--to');
+  if ((fromText === null) !== (toText === null)) throw new Error('Provide both --from and --to for a reviewed backfill.');
+  if (flushOnly && fromText !== null) throw new Error('Use --from/--to with collection, then use --flush to send the saved files.');
+  const backfill = fromText === null ? null : parseBackfillRange(fromText, toText);
+  let endpoint, token;
   if (upload) {
-    endpoint = new URL(process.env.COSTS_INGEST_URL ?? '');
-    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.pathname !== '/api/costs/ingest' || endpoint.search || endpoint.hash) throw new Error('Set COSTS_INGEST_URL to the HTTPS Accounts /api/costs/ingest endpoint');
-    if (!process.env.COSTS_INGEST_TOKEN || process.env.COSTS_INGEST_TOKEN.length < 32) throw new Error('Set a dedicated COSTS_INGEST_TOKEN (32+ characters)');
+    endpoint = parseIngestEndpoint(process.env.COSTS_INGEST_URL);
+    token = process.env.COSTS_INGEST_TOKEN;
+    if (!token || token.length < 32) throw new Error('Set a dedicated COSTS_INGEST_TOKEN (32+ characters).');
   }
-  const credentials = readCursorCredentials();
-  if (!credentials) throw new Error('Sign in to Cursor on this computer first');
-  const index = buildConversationProjectIndex();
   const directory = path.join(process.env.LOCALAPPDATA || path.join(homedir(),'.local','share'),'mpdee-accounts','costs-outbox');
   mkdirSync(directory,{recursive:true,mode:0o700});
-  const now = Date.now();
-  for (let d=days; d>0; d--) {
-    const from = now-d*86400000, to=now-(d-1)*86400000;
-    const events=[];
-    let reported=null, exhausted=false;
-    for (let page=1;page<=20;page++) {
-      const response=await postJson(EVENTS_ENDPOINT,{teamId:0,startDate:String(from),endDate:String(to),page,pageSize:250},credentials.cookie);
-      if (!Array.isArray(response.usageEventsDisplay)) throw new Error('Cursor response format changed. No data sent.');
-      const batch=response.usageEventsDisplay;
-      if (typeof response.totalUsageEventsCount==='number') reported=response.totalUsageEventsCount;
-      events.push(...batch);
-      if (batch.length<250) {exhausted=true;break;}
-    }
-    const quality=exhausted && reported===events.length ? 'complete' : 'partial';
-    const payload={version:'mpdee-costs-v1',provider:'cursor',accountRef:credentials.providerAccountRef,quality,events:events.map(e=>sanitize(e,index))};
-    const body=JSON.stringify(payload,null,2);
-    if (Buffer.byteLength(body)>3_000_000) throw new Error('Daily payload exceeds 3 MB. Use narrower windows before importing.');
-    const file=path.join(directory,`${credentials.providerAccountRef}-${from}-${to}.json`);
-    writeFileSync(`${file}.tmp`,body,{mode:0o600});renameSync(`${file}.tmp`,file);
-    console.log(`${new Date(from).toISOString()} — ${new Date(to).toISOString()}: ${events.length} events, ${quality}. Saved ${file}`);
-    if (quality!=='complete') throw new Error('Incomplete pagination or inconsistent count. File saved for review, not uploaded.');
-    if (upload) {
-      const response=await fetch(endpoint,{method:'POST',redirect:'error',signal:AbortSignal.timeout(65000),headers:{'Content-Type':'application/json',Authorization:`Bearer ${process.env.COSTS_INGEST_TOKEN}`},body});
-      if (!response.ok) throw new Error(`Accounts import returned HTTP ${response.status}. File retained locally for retry.`);
-      const result=await response.json();
-      console.log(`Imported ${result.added} new, ${result.revised} revised, ${result.duplicate} unchanged; ${result.unassigned} unassigned.`);
-    }
-  }
+  const releaseLock = acquireProcessLock(directory);
+  try {
+    const outcome = await collectThenFlush({
+      collect: flushOnly ? null : async () => {
+        const credentials = readCursorCredentials();
+        if (!credentials) throw new Error('Sign in to Cursor on this computer first.');
+        await collect({ credentials, directory, days, backfill });
+      },
+      flush: upload ? async () => flushOutbox({ directory, endpoint, token, send: (url, ingestToken, body) => sendUpload(url, ingestToken, body, process.env.COSTS_VERCEL_BYPASS_TOKEN) }) : null,
+    });
+    const { collectionError, flushError, flushResult } = outcome;
+    if (flushResult) console.log(`Outbox flush: ${flushResult.uploaded} uploaded, ${flushResult.skipped} skipped, ${flushResult.failed} failed.`);
+    if (flushError) throw new Error('Outbox flush could not complete; local files were retained for retry.');
+    if (collectionError) throw new Error(`Collection did not complete: ${collectionError.message}`);
+    if (flushResult?.failed) throw new Error(`${flushResult.failed} outbox file(s) remain for retry.`);
+  } finally { releaseLock(); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  main().catch(error=>{console.error(`costs: ${error.message}`);process.exitCode=1;});
+  main().catch(error=>{console.error(`costs: ${error?.message || 'operation failed'}`);process.exitCode=1;});
 }

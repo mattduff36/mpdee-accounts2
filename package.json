@@ -28,7 +28,9 @@
     "db:studio": "prisma studio",
     "costs:collect": "node scripts/costs/collect.mjs",
     "costs:sync": "node scripts/costs/collect.mjs --upload",
-    "test:costs": "tsx --test src/lib/costs/*.test.ts"
+    "test:costs": "tsx --test src/lib/costs/*.test.ts",
+    "costs:flush": "node scripts/costs/collect.mjs --flush",
+    "test:costs:collector": "node --test scripts/costs/*.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
