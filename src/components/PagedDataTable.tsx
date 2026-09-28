@@ -24,6 +24,8 @@ export function PagedDataTable({
   subtotals,
   framed = true,
   children,
+  pagination,
+  mobileRows,
 }: {
   months?: MonthTab[]
   activeMonth?: string
@@ -35,6 +37,8 @@ export function PagedDataTable({
   pageSize?: number
   subtotals?: { label: string; items: SubtotalItem[] }
   framed?: boolean
+  mobileRows?: ReactNode
+  pagination?: { page: number; pageCount: number; total: number }
   children: ReactNode
 }) {
   const rows = Children.toArray(children)
@@ -45,8 +49,8 @@ export function PagedDataTable({
     setLimit(pageSize)
   }, [resetKey, pageSize])
 
-  const shown = rows.slice(0, limit)
-  const remaining = Math.max(0, rows.length - shown.length)
+  const shown = pagination ? rows : rows.slice(0, limit)
+  const remaining = pagination ? 0 : Math.max(0, rows.length - shown.length)
   const tones = {
     default: "text-slate-950",
     success: "text-emerald-700",
@@ -64,7 +68,7 @@ export function PagedDataTable({
               return (
                 <Link
                   key={month.key}
-                  href={withQuery(path, query ?? {}, { month: month.key })}
+                  href={withQuery(path, query ?? {}, { month: month.key, page: undefined })}
                   scroll={false}
                   aria-current={selected ? "page" : undefined}
                   className={cn(
@@ -94,7 +98,8 @@ export function PagedDataTable({
           </div>
         </nav>
       )}
-      <table className="w-full text-sm tabular-nums">
+      {mobileRows && <div className="md:hidden">{mobileRows}</div>}
+      <div className={cn("overflow-x-auto", Boolean(mobileRows) && "hidden md:block")} role="region" aria-label="Records" tabIndex={0}><table className="w-full text-sm tabular-nums">
         <thead>{header}</thead>
         <tbody>
           {shown}
@@ -106,7 +111,7 @@ export function PagedDataTable({
             </tr>
           )}
         </tbody>
-      </table>
+      </table></div>
       {rows.length > 0 && subtotals && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/80 px-4 py-3">
           <p className="text-sm font-semibold text-slate-700">{subtotals.label}</p>
@@ -119,6 +124,16 @@ export function PagedDataTable({
             ))}
           </dl>
         </div>
+      )}
+      {pagination && pagination.total > 0 && path && (
+        <nav aria-label="Expense pages" className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-sm">
+          <p className="text-slate-600">{(pagination.page - 1) * pageSize + 1}–{Math.min(pagination.page * pageSize, pagination.total)} of {pagination.total} expenses</p>
+          <div className="flex items-center gap-3">
+            {pagination.page > 1 && <Link className="inline-flex min-h-11 items-center rounded-lg border px-3 font-medium hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" href={withQuery(path, query ?? {}, { month: activeMonth, page: String(pagination.page - 1) })}>Previous</Link>}
+            <span className="text-slate-600">Page {pagination.page} of {pagination.pageCount}</span>
+            {pagination.page < pagination.pageCount && <Link className="inline-flex min-h-11 items-center rounded-lg border px-3 font-medium hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" href={withQuery(path, query ?? {}, { month: activeMonth, page: String(pagination.page + 1) })}>Next</Link>}
+          </div>
+        </nav>
       )}
       {remaining > 0 && (
         <div className="border-t border-slate-100 px-4 py-3 text-center">

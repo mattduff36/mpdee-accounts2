@@ -9,7 +9,7 @@ export async function AppShell({ children }: AppShellProps) {
   const user = await requireAuth()
 
   return (
-    <div className="min-h-screen overflow-hidden bg-slate-50 text-slate-950">
+    <div className="accounts-shell min-h-screen overflow-x-clip text-slate-950">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.16),_transparent_34rem)]" />
       <Sidebar canWrite={canWrite(user)} />
       <main className="relative min-h-screen lg:pl-72">

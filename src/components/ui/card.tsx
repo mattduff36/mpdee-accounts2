@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn('rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.45)] backdrop-blur', className)}>{children}</div>
+  return <div className={cn('rounded-2xl border border-slate-200/80 bg-white shadow-[0_12px_32px_-24px_rgba(30,64,175,0.24)]', className)}>{children}</div>
 }
 export function CardHeader({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cn('flex flex-col space-y-1.5 p-5 sm:p-6', className)}>{children}</div>

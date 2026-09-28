@@ -40,7 +40,7 @@
 }
 
 main .rounded-lg.border.bg-white:not(.bg-blue-50) {
-  @apply rounded-2xl border-slate-200/80 bg-white/95 shadow-[0_20px_60px_-35px_rgba(15,23,42,0.45)];
+  @apply rounded-2xl border-slate-200/80 bg-white/95 shadow-[0_12px_32px_-24px_rgba(30,64,175,0.24)];
 }
 
 main .rounded-lg.border.bg-white:has(table) {
@@ -56,3 +56,20 @@ main textarea {
 main label {
   @apply text-slate-700;
 }
+
+@layer base {
+  :focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+  input, textarea { caret-color: #2563eb; }
+  * { scrollbar-color: #94a3b8 #f1f5f9; scrollbar-width: thin; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+}
+
+/* Restrained colour gives the workspace depth while keeping records on clear surfaces. */
+.accounts-shell {
+  background-color: #edf2f8;
+  background-image: linear-gradient(135deg, #e6eefb 0%, #f1f5fa 48%, #ecf4f3 100%);
+}
+main thead { background-color: #eef3fb; }
+main thead tr { background-color: transparent !important; }
+main th { color: #435574; }
+main tbody tr:hover { background-color: #f3f7fd; }
