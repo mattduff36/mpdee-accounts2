@@ -57,7 +57,7 @@ export async function saveMatrix(raw: unknown): Promise<SaveResult> {
       return counts
     })
     revalidatePath('/costs','layout')
-    return {ok:true,message:`Saved ${result.projectCount} project changes, ${result.rateCount} new rates and ${result.mappingCount} source links. ${result.assigned} existing usage records assigned; ${result.conflicts} conflicts held for review. Previous rate history is retained.`}
+    return {ok:true,message:`Saved ${result.projectCount} project changes, ${result.rateCount} new rates and ${result.mappingCount} source links. ${result.assigned} existing usage records assigned; ${result.conflicts} conflicts held for review. Open Overview to see recalculated estimates. Rates apply from their effective date; no re-import is needed. Previous rate history is retained.`}
   } catch (error) {
     const message=error instanceof Error ? error.message : ''
     const safe=['Choose','Included base','Percentage','A project','A source'].some(prefix=>message.startsWith(prefix))
