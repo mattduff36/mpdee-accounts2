@@ -40,3 +40,8 @@ export function formatGbpUnits(units: bigint | null): string {
   const pence = roundRatio(units*BigInt(100),UNIT)
   return new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(Number(pence)/100)
 }
+
+// Resolve each historical year independently, including its preceding working-day buffer.
+export function referenceYears(dates: Date[]): string[] {
+  return Array.from(new Set(dates.map(date => date.getUTCFullYear().toString()))).sort()
+}

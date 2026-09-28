@@ -117,3 +117,13 @@ The live panel reports the active account, inactive account history, last succes
 The September 2026 historical recovery retained 27,393 detailed records across four source batches and added 27,000 previously absent records. Each import was replayed without additions and preserved pre-existing events/revisions. These are batch totals, not an assertion of complete historical costs or the current live row count.
 
 Both original CSV exports have corresponding detailed-event candidates; weak timestamp-only matches remain separate evidence. Historical funding labels, missing prices, project attribution and subscription allocation require further review. Inconclusive periods remain documented, including matt.mpdee's 19–20 June 2025 and admin's 1–9 December 2025 (before its earliest evidenced billing). Do not turn these into zero usage or invent amounts.
+
+## Project snapshot API v2 (preview integration)
+
+GET /api/costs/projects/[slug]/snapshot uses the existing project-scoped bearer read token. Archived projects are unavailable. It returns complete project history, or events on/after an optional strict UTC timestamp such as ?from=2026-08-13T23:00:00.000Z. Requests exceeding 50,000 events fail explicitly; results are never silently truncated. The v1 monthly ledger API remains unchanged.
+
+The version is mpdee-project-cost-snapshot-v2. Responses contain project, approvedSnapshot:false, asOf, revision, sourceUpdatedAt, coverage (events, held, fxMissing, from), and daily UTC lines grouped by category, funding, source currency and held status. Each line has stable id, revision, label, periodStart/periodEnd, amountMinor (integer GBP pence or null), currency:GBP, provisional:true, held, events, funding, sourceCurrency, sourceUnits (integer 1/10,000,000 source-currency charge units or null), and an fx array of dated rate/source provenance. No account references or task content are returned.
+
+Source charges preserve the existing ledger's per-event source-unit rounding. GBP conversion aggregates those precise charges and rounds to pence once per daily group. Held lines publish no charge; missing FX produces an unavailable GBP amount. Imported FX takes precedence over dated reference rates, including across multiple years. Line IDs survive policy and FX changes; revisions reflect those changes. The optional history boundary namespaces IDs. Fetch time and duplicate import timestamps do not change the revision hash.
+
+These remain recalculable estimates, not approved billing records or a reconciliation of iTrader's existing paid balances. The iTrader integration is a preview reader until its historical balances and cutover are separately verified. This API creates no invoices, expenses, payments or frozen snapshots.

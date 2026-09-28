@@ -452,6 +452,32 @@ model CostProject {
   mappings  CostProjectMapping[]
   policies  CostPolicy[]
   events    CostUsageEvent[]
+  legacyCharges CostLegacyCharge[]
+}
+
+// Reviewed, frozen legacy client balances. Never provider cash or accounting expenses.
+// Import once by source identity; future corrections require a separately reviewed workflow.
+model CostLegacyCharge {
+  id                        String @id
+  projectId                 String
+  project                   CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourceSystem              String
+  sourceDatabaseFingerprint String
+  sourceKind                String
+  sourceBucket              String
+  sourceRevision            Int
+  sourceChecksum            String
+  category                  String
+  periodStart               DateTime @db.Timestamptz(3)
+  periodEnd                 DateTime @db.Timestamptz(3)
+  label                     String
+  frozenGbpPence            Int
+  invoiceability            String
+  sourceEvidence            Json
+  createdAt                 DateTime @default(now())
+
+  @@unique([sourceSystem, sourceDatabaseFingerprint, sourceKind, sourceBucket], map: "CostLegacyCharge_source_identity_key")
+  @@index([projectId, periodStart, periodEnd])
 }
 
 model CostProjectMapping {

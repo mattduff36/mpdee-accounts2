@@ -80,7 +80,7 @@ test('historical Pro and Pro Plus included labels use precise nominal value and 
     const [event] = normalize(input([{...raw,kind,chargedCents:500}]))
     assert.equal(event.funding,'included')
     assert.equal(event.nominal,decimalUnits('2.3365'))
-    assert.equal(event.cash,0n)
+    assert.equal(event.cash,BigInt(0))
     assert.equal(event.reason,null)
     assert.equal(event.quality,'complete')
     assert.equal(chargeUnits({provider:'cursor',...event},policy),decimalUnits('1.4019'))
@@ -93,7 +93,7 @@ test('zero charged cents cannot manufacture missing nominal value for legacy non
   for (const kind of ['USAGE_EVENT_KIND_INCLUDED_IN_ULTRA','USAGE_EVENT_KIND_INCLUDED_IN_PRO','USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS','USAGE_EVENT_KIND_USAGE_BASED']) {
     const [event] = normalize(input([{...raw,kind,isTokenBasedCall:false,tokenUsage:null,chargedCents:0,usageBasedCosts:'0.00'}]))
     assert.equal(event.nominal,null)
-    assert.equal(event.cash,0n)
+    assert.equal(event.cash,BigInt(0))
     assert.equal(event.quality,'review')
     assert.equal(event.reason,'Missing provider monetary value; review required')
   }
@@ -101,7 +101,7 @@ test('zero charged cents cannot manufacture missing nominal value for legacy non
 
 test('precise zero nominal remains valid while unknown funding and fees remain held', () => {
   const [zero] = normalize(input([{...raw,kind:'USAGE_EVENT_KIND_INCLUDED_IN_PRO',tokenUsage:{totalCents:0}}]))
-  assert.equal(zero.nominal,0n); assert.equal(zero.quality,'complete')
+  assert.equal(zero.nominal,BigInt(0)); assert.equal(zero.quality,'complete')
   for(const kind of ['USAGE_EVENT_KIND_FREE_CREDIT','USAGE_EVENT_KIND_CUSTOM_SUBSCRIPTION','USAGE_EVENT_KIND_USER_API_KEY','USAGE_EVENT_KIND_ERRORED_NOT_CHARGED','USAGE_EVENT_KIND_ABORTED_NOT_CHARGED']){
     const [event]=normalize(input([{...raw,kind,chargedCents:0}]))
     assert.equal(event.funding,'unknown');assert.equal(event.quality,'review')

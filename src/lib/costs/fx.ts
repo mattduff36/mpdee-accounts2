@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { unstable_cache } from 'next/cache'
-import { ECB_SOURCE, parseEcbRates, quoteFor, type FxQuote } from './fx-values'
+import { ECB_SOURCE, parseEcbRates, quoteFor, type FxQuote, referenceYears } from './fx-values'
 export { convertUnits, formatGbpUnits, quoteFor } from './fx-values'
 export type { FxQuote } from './fx-values'
 
@@ -28,8 +28,10 @@ export async function ledgerFx(rows: FxRow[]) {
     return memo.get(key)??null
   }
   let unavailable = false
-  if (rows.some(r=>r.revision && !r.revision.fxGbp && !resolve(r.revision.currency,r.event.occurredAt.toISOString().slice(0,10)))) {
-    try { quotes.push(...await fetchReferenceRates(dates[0].slice(0,4)));memo.clear() } catch { unavailable=true }
+  const missingYears = referenceYears(rows.filter(r => r.revision && !r.revision.fxGbp && !resolve(r.revision.currency, r.event.occurredAt.toISOString().slice(0,10))).map(r => r.event.occurredAt))
+  // Each requested year is cached separately; a failed year never discards successful years.
+  for (const year of missingYears) {
+    try { quotes.push(...await fetchReferenceRates(year)); memo.clear() } catch { unavailable = true }
   }
   const resolved = rows.map(row=>{
     const date=row.event.occurredAt.toISOString().slice(0,10), revision=row.revision

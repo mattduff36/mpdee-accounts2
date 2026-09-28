@@ -2,6 +2,7 @@
 import { requireAuth, requireWrite } from '@/lib/auth'
 import { costTransaction } from '@/lib/costs/service'
 import { parsePeriod, splitPence, validAllocation } from '@/lib/costs/profitability'
+import { subscriptionWeights } from '@/lib/costs/subscription-weights'
 import { revalidatePath } from 'next/cache'
 const value = (form: FormData, key: string) => String(form.get(key) || '').trim()
 const done = (message: string) => { revalidatePath('/costs/analysis'); revalidatePath('/dashboard'); return { message, error: false } }
@@ -53,13 +54,7 @@ export async function allocateSubscription(_state:{message:string;error:boolean}
   if(expense.costAllocations.length)throw new Error('This bill already has shares. Edit those shares manually to preserve your review.')
   const end=new Date(period.periodEnd.getTime()+86400000)
   const events=await tx.costUsageEvent.findMany({where:{provider:'cursor',accountRef,occurredAt:{gte:period.periodStart,lt:end}},include:{revisions:{orderBy:{revision:'desc'},take:1}},take:50001})
-  if(!events.length||events.length>50000)throw new Error('A usable usage window (1–50,000 events) is required.')
-  const included=events.filter(e=>e.revisions[0]?.funding==='included')
-  if(!included.length)throw new Error('No included usage exists for this account and period.')
-  if(included.some(e=>e.revisions[0].nominalUnits===null||e.revisions[0].quality!=='complete'))throw new Error('Some included records need monetary review. Resolve them before allocating this bill.')
-  if(new Set(included.map(e=>e.revisions[0].currency)).size!==1)throw new Error('Mixed source currencies cannot be used as comparable usage weights.')
-  const weights=new Map<string,bigint>()
-  for(const event of included){const id=event.projectId||'unassigned';weights.set(id,(weights.get(id)||BigInt(0))+(event.revisions[0].nominalUnits||BigInt(0)))}
+  const {included,weights}=subscriptionWeights(events)
   const shares=splitPence(expense.netAmount,Array.from(weights).map(([id,weight])=>({id,weight})))
   if(!shares.size)throw new Error('Usage value is zero; enter reviewed manual shares instead.')
   held=shares.get('unassigned')||0
