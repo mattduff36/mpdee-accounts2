@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EXPECTED_ACCOUNTS, collectAllAccounts, identityMatches, registerCurrentAccount, loadAccountCredential, saveAccountStatus } from './accounts.mjs';
+import { EXPECTED_ACCOUNTS, collectAllAccounts, collectActiveAccount, identityMatches, registerCurrentAccount, loadAccountCredential, saveAccountStatus } from './accounts.mjs';
+import { saveCheckpoint, loadCheckpoint, DAY_MS } from './reliability.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -95,4 +96,60 @@ test('failed runs preserve last success and new partial coverage without leaking
     assert.equal(saved.accounts[0].coveredThrough,next.accounts[0].coveredThrough);
     assert.equal(saved.accounts[0].catchingUp,true);
   } finally { rmSync(directory,{recursive:true,force:true}); }
+});
+
+test('active mode probes only the default desktop account and preserves its stable reference across rotation',async()=>{
+  const stored=credential(1), current={...stored,providerAccountRef:'f'.repeat(32),cookie:'rotated-fixture-session'};
+  const loaded=[],verified=[],saved=[],collected=[];
+  const result=await collectActiveAccount({current,load:email=>{loaded.push(email);return stored;},verify:value=>{verified.push(value);return identity(value);},persist:value=>saved.push(value),collect:value=>collected.push(value)});
+  assert.deepEqual(loaded,[stored.email]);assert.equal(verified.length,1);assert.equal(verified[0],current);
+  assert.equal(result.mode,'active_account');assert.equal(result.expected,4);assert.equal(result.activeAccount,stored.email);assert.equal(result.succeeded,1);
+  assert.deepEqual(result.accounts.map(a=>a.state),['inactive','success','inactive','inactive']);
+  assert.equal(saved[0].providerAccountRef,stored.providerAccountRef);assert.equal(collected[0].providerAccountRef,stored.providerAccountRef);
+  assert.equal(JSON.stringify(result).includes('rotated-fixture-session'),false);
+});
+
+test('unsupported or absent active account makes no stored-session or provider requests',async()=>{
+  for(const current of [null,{...credential(0),email:'unsupported@example.com'}]){
+    const forbidden=()=>assert.fail('inactive account must not be contacted');
+    const result=await collectActiveAccount({current,load:forbidden,verify:forbidden,persist:forbidden,collect:forbidden});
+    assert.equal(result.succeeded,0);assert.equal('activeAccount' in result,false);assert.ok(result.accounts.every(a=>a.state==='inactive'));
+  }
+});
+
+test('active identity failure never falls back to retained sessions or mutates other accounts',async()=>{
+  let verifications=0;
+  const forbidden=()=>assert.fail('failed identity must not persist or collect');
+  const result=await collectActiveAccount({current:credential(2),load:email=>{assert.equal(email,EXPECTED_ACCOUNTS[2]);return credential(2);},verify:()=>{verifications++;throw new Error('private-test-value');},persist:forbidden,collect:forbidden});
+  assert.equal(verifications,1);assert.equal(result.succeeded,0);assert.equal(result.accounts[2].state,'identity_unverified');
+  assert.ok(result.accounts.filter((_,i)=>i!==2).every(a=>a.state==='inactive'));assert.ok(!JSON.stringify(result).includes('private-test-value'));
+  for(const mismatched of [identity(credential(1)),{...identity(credential(2)),identityKey:'f'.repeat(64)}]){
+    const mismatch=await collectActiveAccount({current:credential(2),load:()=>credential(2),verify:()=>mismatched,persist:forbidden,collect:forbidden});
+    assert.equal(mismatch.accounts[2].state,'identity_mismatch');
+  }
+});
+
+test('switching active accounts maintains separate checkpoints and inactive account history',async()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-active-switch-'));
+  try {
+    const bindings=new Map();
+    const run=(index,day)=>collectActiveAccount({current:credential(index),load:email=>bindings.get(email)??null,verify:identity,persist:value=>bindings.set(value.email,value),now:()=>new Date(day*DAY_MS).toISOString(),collect:value=>{
+      assert.equal(loadCheckpoint(directory,value.providerAccountRef),null);
+      saveCheckpoint(directory,value.providerAccountRef,day*DAY_MS);
+      return {coveredThrough:new Date(day*DAY_MS).toISOString(),catchingUp:false};
+    }});
+    const first=await run(0,100);saveAccountStatus(directory,first);
+    const second=await run(1,101);saveAccountStatus(directory,second);
+    assert.equal(loadCheckpoint(directory,credential(0).providerAccountRef),100*DAY_MS);
+    assert.equal(loadCheckpoint(directory,credential(1).providerAccountRef),101*DAY_MS);
+    assert.equal(second.accounts[0].state,'inactive');assert.equal(second.accounts[0].lastSuccessAt,first.accounts[0].lastSuccessAt);
+    assert.equal(second.accounts[0].coveredThrough,first.accounts[0].coveredThrough);
+    assert.equal(second.succeeded,1);
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+test('active collection failure preserves safe progress without exposing errors',async()=>{
+  const result=await collectActiveAccount({current:credential(3),load:()=>null,verify:identity,collect:()=>{const error=new Error('private-test-value');error.coverage={coveredThrough:'2026-09-01T00:00:00.000Z',catchingUp:true,cookie:'private-test-value'};throw error;}});
+  assert.equal(result.accounts[3].state,'collection_failed');assert.equal(result.accounts[3].coveredThrough,'2026-09-01T00:00:00.000Z');
+  assert.equal(result.accounts[3].catchingUp,true);assert.equal(result.succeeded,0);assert.ok(!JSON.stringify(result).includes('private-test-value'));
 });

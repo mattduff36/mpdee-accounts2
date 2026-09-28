@@ -5,23 +5,27 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCursorCredentials, verifyCursorIdentity, buildConversationProjectIndex, postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
-import { registerCurrentAccount, collectAllAccounts, loadAccountCredential, saveAccountCredential, saveAccountStatus, EXPECTED_ACCOUNTS, normalizeEmail } from './accounts.mjs';
-import { loadDesktopProfiles, saveDesktopProfile, readDesktopCredentialsForAccount, validateDesktopProfileBinding } from './desktop-profiles.mjs';
+import { registerCurrentAccount, collectActiveAccount, loadAccountCredential, saveAccountCredential, saveAccountStatus, EXPECTED_ACCOUNTS, normalizeEmail } from './accounts.mjs';
+import { saveDesktopProfile, validateDesktopProfileBinding } from './desktop-profiles.mjs';
 import { sendUpload } from './upload.mjs';
 import { sanitizeCursorEvent } from './sanitize.mjs';
 import { fetchCompleteWindow } from './collection.mjs';
-import { acquireProcessLock, collectThenFlush, collectionWindows, advanceContiguousCheckpoint, DAY_MS, flushOutbox, loadCheckpoint, parseBackfillRange, parseIngestEndpoint, saveCheckpoint, saveWindowPayload } from './reliability.mjs';
+import { acquireProcessLock, collectThenFlush, collectionWindows, DAY_MS, flushOutbox, loadCheckpoint, parseBackfillRange, parseIngestEndpoint, saveCheckpoint, saveWindowPayload } from './reliability.mjs';
+import { loadRecoveryState, saveRecoveryState, selectRecoveryWindows, recordCompletedDay } from './recovery-state.mjs';
 
 export { sanitizeCursorEvent as sanitize };
 
 export async function collect({ credentials, directory, days, backfill, now = Date.now(), index = buildConversationProjectIndex(), fetchWindow = fetchCompleteWindow }) {
   let checkpoint = loadCheckpoint(directory, credentials.providerAccountRef);
-  const windows = collectionWindows({ checkpoint, initialDays: days, now, backfill });
+  const initialWindows = collectionWindows({ checkpoint, initialDays: days, now, backfill });
   if (checkpoint === null) {
-    const firstFrom = windows[0]?.from ?? Math.floor(now / DAY_MS) * DAY_MS;
+    const firstFrom = initialWindows[0]?.from ?? Math.floor(now / DAY_MS) * DAY_MS;
     saveCheckpoint(directory, credentials.providerAccountRef, firstFrom);
     checkpoint = firstFrom;
   }
+  let recovery = loadRecoveryState(directory, credentials.providerAccountRef, checkpoint);
+  const selection = backfill ? null : selectRecoveryWindows({ state:recovery, checkpoint, now, initialDays:days });
+  const windows = selection?.windows ?? initialWindows;
   if (!windows.length) console.log('Local Cursor collection checkpoint is current.');
   let failedWindows = 0;
   for (const { from, to } of windows) {
@@ -36,7 +40,12 @@ export async function collect({ credentials, directory, days, backfill, now = Da
     saveWindowPayload({ directory, accountRef:credentials.providerAccountRef, from, complete:quality === 'complete', body });
     console.log(`${new Date(from).toISOString()} — ${new Date(to).toISOString()}: ${events.length} events, ${quality}. Saved locally.`);
     if (quality!=='complete') throw new Error('Incomplete pagination or inconsistent count. File saved for review, checkpoint not advanced.');
-    const nextCheckpoint = advanceContiguousCheckpoint({ checkpoint, from, to, now });
+    const completed = recordCompletedDay(recovery, {checkpoint, from, to, now});
+    recovery = completed.state;
+    // Persist closed-day proof first; interruption can cause a safe re-fetch,
+    // but never a checkpoint crossing an unverified interval.
+    saveRecoveryState(directory, recovery);
+    const nextCheckpoint = completed.checkpoint;
     if (nextCheckpoint !== checkpoint) {
       saveCheckpoint(directory, credentials.providerAccountRef, nextCheckpoint);
       checkpoint = nextCheckpoint;
@@ -45,6 +54,10 @@ export async function collect({ credentials, directory, days, backfill, now = Da
       failedWindows++;
       console.log(`${new Date(from).toISOString()}: usage window remains unresolved; retained for retry.`);
     }
+  }
+  if (selection) {
+    recovery.nextFrom = selection.nextFrom;
+    saveRecoveryState(directory, recovery);
   }
   const coverage = { coveredThrough:new Date(checkpoint).toISOString(), catchingUp:checkpoint < Math.floor(now / DAY_MS) * DAY_MS };
   if (failedWindows) {
@@ -103,14 +116,13 @@ async function main() {
     const outcome = await collectThenFlush({
       collect: flushOnly ? null : async () => {
         let current = null;
-        try { current = readCursorCredentials(); } catch { /* Retained sessions can still collect if desktop is unavailable. */ }
-        const profiles = loadDesktopProfiles();
-        const status = await collectAllAccounts({ current, currentForAccount:email => readDesktopCredentialsForAccount(email, profiles) ?? (normalizeEmail(current?.email) === email ? current : null), load:loadAccountCredential, verify:verifyCursorIdentity,
+        try { current = readCursorCredentials(); } catch { /* No supported active desktop session: report failure without probing saved sessions. */ }
+        const status = await collectActiveAccount({ current, load:loadAccountCredential, verify:verifyCursorIdentity,
           persist:saveAccountCredential, collect:credentials => collect({ credentials, directory, days, backfill }) });
         saveAccountStatus(directory, status);
         accountStatus = status;
         for (const account of status.accounts) console.log(`Cursor ${account.email}: ${account.state}.`);
-        if (status.succeeded !== status.expected) throw new Error(`${status.succeeded}/${status.expected} expected Cursor accounts collected; inspect accounts-status.json locally.`);
+        if (status.succeeded !== 1) throw new Error('The active Cursor desktop account was not collected; inspect accounts-status.json locally.');
       },
       flush: upload ? async () => flushOutbox({ directory, endpoint, token, send: (url, ingestToken, body) => sendUpload(url, ingestToken, body, process.env.COSTS_VERCEL_BYPASS_TOKEN) }) : null,
     });

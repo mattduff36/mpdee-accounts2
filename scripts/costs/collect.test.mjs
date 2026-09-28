@@ -6,7 +6,7 @@ import path from 'node:path';
 import { collect } from './collect.mjs';
 import { DAY_MS, saveCheckpoint, loadCheckpoint } from './reliability.mjs';
 
-test('failed old window preserves the gap while recent usage saves and the next run resumes', async t => {
+test('failed old window stays visible while later history progresses and repair joins saved coverage', async t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'costs-collect-integration-'));
   t.after(() => rmSync(directory, {recursive:true, force:true}));
   const accountRef = 'a'.repeat(32), now = 200 * DAY_MS + 123;
@@ -27,7 +27,11 @@ test('failed old window preserves the gap while recent usage saves and the next 
   assert.ok(seen.includes(200 * DAY_MS));
   assert.ok(readdirSync(directory).includes(`${accountRef}-${200 * DAY_MS}-${201 * DAY_MS}.json`));
   const outcome = await collect({...options, fetchWindow:async () => ({events:[], quality:'complete'})});
-  assert.equal(outcome.coveredThrough, new Date(106 * DAY_MS).toISOString());
-  assert.equal(loadCheckpoint(directory, accountRef), 106 * DAY_MS);
+  assert.equal(outcome.coveredThrough, new Date(101 * DAY_MS).toISOString());
+  assert.equal(loadCheckpoint(directory, accountRef), 101 * DAY_MS);
+  assert.ok(readdirSync(directory).includes(`${accountRef}-${111 * DAY_MS}-${112 * DAY_MS}.json`));
   assert.equal(outcome.catchingUp, true);
+  const repaired=await collect({...options,backfill:{from:101*DAY_MS,to:102*DAY_MS},fetchWindow:async()=>({events:[],quality:'complete'})});
+  assert.equal(repaired.coveredThrough,new Date(112*DAY_MS).toISOString());
+  assert.equal(loadCheckpoint(directory,accountRef),112*DAY_MS);
 });

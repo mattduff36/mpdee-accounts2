@@ -114,6 +114,44 @@ export async function collectAllAccounts({ current, currentForAccount, load, ver
   }
   return { version:1, expected:EXPECTED_ACCOUNTS.length, succeeded:results.filter(r => r.state === 'success').length, finishedAt:now(), accounts:results };
 }
+/** Collect only the account currently signed into the default Cursor desktop. */
+export async function collectActiveAccount({ current, load, verify, collect, persist = () => {}, now = () => new Date().toISOString() }) {
+  const activeEmail = normalizeEmail(current?.email);
+  const activeAccount = EXPECTED_ACCOUNTS.includes(activeEmail) ? activeEmail : undefined;
+  const accounts = EXPECTED_ACCOUNTS.map(email => ({ email, startedAt:now(), state:'inactive', finishedAt:now() }));
+  if (activeAccount) {
+    const result = accounts.find(account => account.email === activeAccount);
+    result.state = 'identity_unverified';
+    try {
+      // Read the saved binding only to preserve identity and historical keys.
+      // Never use its session as a fallback or probe another account's session.
+      const stored = await load(activeAccount);
+      const identity = await verify(current);
+      const bound = bindCurrentCredential(activeAccount, current, identity, stored);
+      if (!bound || !identityMatches(activeAccount, bound, identity)) result.state = 'identity_mismatch';
+      else {
+        await persist(bound);
+        result.state = 'collection_failed';
+        const coverage = await collect(bound);
+        if (validDate(coverage?.coveredThrough)) result.coveredThrough = coverage.coveredThrough;
+        if (typeof coverage?.catchingUp === 'boolean') result.catchingUp = coverage.catchingUp;
+        result.accountRef = bound.providerAccountRef;
+        result.state = 'success';
+      }
+    } catch (error) {
+      if (result.state === 'collection_failed') {
+        if (validDate(error?.coverage?.coveredThrough)) result.coveredThrough = error.coverage.coveredThrough;
+        if (typeof error?.coverage?.catchingUp === 'boolean') result.catchingUp = error.coverage.catchingUp;
+      }
+    }
+    result.finishedAt = now();
+    if (result.state === 'success') result.lastSuccessAt = result.finishedAt;
+  }
+  return { version:1, expected:EXPECTED_ACCOUNTS.length, mode:'active_account',
+    ...(activeAccount ? {activeAccount} : {}), succeeded:accounts.filter(account => account.state === 'success').length,
+    finishedAt:now(), accounts };
+}
+
 export function saveAccountStatus(directory, status) {
   const target = path.join(directory, 'accounts-status.json');
   let previous;
