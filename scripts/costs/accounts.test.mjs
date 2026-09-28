@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EXPECTED_ACCOUNTS, collectAllAccounts, collectActiveAccount, identityMatches, registerCurrentAccount, loadAccountCredential, saveAccountStatus } from './accounts.mjs';
-import { saveCheckpoint, loadCheckpoint, DAY_MS } from './reliability.mjs';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { EXPECTED_ACCOUNTS, collectAllAccounts, collectActiveAccount, identityMatches, registerCurrentAccount, loadAccountCredential, saveAccountStatus, loadAccountStatus } from './accounts.mjs';
+import { saveCheckpoint, loadCheckpoint, DAY_MS, flushOutbox } from './reliability.mjs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const credential = index => ({ email:EXPECTED_ACCOUNTS[index], providerAccountRef:String(index).repeat(32), identityKey:String(index).repeat(64), cookie:'private-test-value' });
@@ -87,7 +87,7 @@ test('failed runs preserve last success and new partial coverage without leaking
   const directory=mkdtempSync(path.join(tmpdir(),'cursor-health-'));
   try {
     const first={finishedAt:'2026-09-27T10:00:00.000Z',uploadState:'success',accounts:[{email:EXPECTED_ACCOUNTS[0],state:'success',lastSuccessAt:'2026-09-27T10:00:00.000Z',coveredThrough:'2026-09-20T00:00:00.000Z',catchingUp:true}]};
-    saveAccountStatus(directory,first);
+    saveAccountStatus(directory,first,{uploaded:1,uploadFinishedAt:first.finishedAt});
     const next={finishedAt:'2026-09-28T10:00:00.000Z',uploadState:'failed',accounts:[{email:EXPECTED_ACCOUNTS[0],state:'collection_failed',coveredThrough:'2026-09-23T00:00:00.000Z',catchingUp:true}]};
     saveAccountStatus(directory,next);
     const saved=JSON.parse(readFileSync(path.join(directory,'accounts-status.json'),'utf8'));
@@ -152,4 +152,104 @@ test('active collection failure preserves safe progress without exposing errors'
   const result=await collectActiveAccount({current:credential(3),load:()=>null,verify:identity,collect:()=>{const error=new Error('private-test-value');error.coverage={coveredThrough:'2026-09-01T00:00:00.000Z',catchingUp:true,cookie:'private-test-value'};throw error;}});
   assert.equal(result.accounts[3].state,'collection_failed');assert.equal(result.accounts[3].coveredThrough,'2026-09-01T00:00:00.000Z');
   assert.equal(result.accounts[3].catchingUp,true);assert.equal(result.succeeded,0);assert.ok(!JSON.stringify(result).includes('private-test-value'));
+});
+
+async function completedStatus() {
+  return {...await collectActiveAccount({current:credential(0),load:()=>null,verify:identity,collect:()=>({coveredThrough:'2026-09-27T00:00:00.000Z',catchingUp:false}),now:()=> '2026-09-27T10:00:00.000Z'}),uploadState:'failed'};
+}
+
+test('upload-only retry advances upload time without changing collection freshness or copying arbitrary fields',async()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-flush-status-'));
+  try {
+    const original=await completedStatus();
+    const contaminated={...original,cookie:'private-secret',accounts:original.accounts.map(a=>({...a,prompt:'private-prompt',token:'private-token'}))};
+    writeFileSync(path.join(directory,'accounts-status.json'),JSON.stringify(contaminated));
+    const status=loadAccountStatus(directory,Date.parse('2026-09-29T12:00:00.000Z'));
+    assert.deepEqual(status,original);
+    status.uploadState='success';
+    const completion='2026-09-29T12:00:00.000Z';
+    saveAccountStatus(directory,status,{uploaded:1,uploadFinishedAt:completion});
+    const published=loadAccountStatus(directory,Date.parse(completion));
+    assert.equal(published.lastUploadSuccessAt,completion);
+    assert.equal(published.finishedAt,original.finishedAt);
+    assert.deepEqual(published.accounts,original.accounts);
+    assert.ok(!JSON.stringify(published).includes('private-'));
+    status.uploadState='failed';
+    saveAccountStatus(directory,status,{uploadFinishedAt:'2026-09-30T12:00:00.000Z'});
+    assert.equal(loadAccountStatus(directory,Date.parse('2026-09-30T12:00:00.000Z')).lastUploadSuccessAt,completion);
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+test('invalid prior reports fail closed for malformed known fields and inconsistent identities',async()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-status-validation-'));
+  try {
+    const valid=await completedStatus(),now=Date.parse('2026-09-29T12:00:00.000Z');
+    assert.equal(loadAccountStatus(directory,now),null);
+    const broken=[
+      '{private-invalid-json',
+      JSON.stringify({...valid,finishedAt:'2026-02-30T10:00:00.000Z'}),
+      JSON.stringify({...valid,finishedAt:'2099-01-01T00:00:00.000Z'}),
+      JSON.stringify({...valid,mode:'private-secret'}),
+      JSON.stringify({...valid,succeeded:2}),
+      JSON.stringify({...valid,accounts:[valid.accounts[0],valid.accounts[0],...valid.accounts.slice(2)]}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===0?{...a,accountRef:'private-secret'}:a)}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===1?{...a,email:'other@example.com'}:a)}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===1?{...a,state:'success'}:a)}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===1?{...a,catchingUp:'private-secret'}:a)}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===0?{...a,startedAt:'2026-09-28T00:00:00.000Z'}:a)}),
+      JSON.stringify({...valid,accounts:valid.accounts.map((a,i)=>i===0?{...a,coveredThrough:{token:'private-secret'}}:a)}),
+      JSON.stringify({...valid,extra:'x'.repeat(17000)}),
+    ];
+    for(const raw of broken){writeFileSync(path.join(directory,'accounts-status.json'),raw);assert.equal(loadAccountStatus(directory,now),null);}
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+test('invalid collection status does not block sanitized queued usage uploads',async()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-flush-invalid-status-'));
+  try {
+    writeFileSync(path.join(directory,'accounts-status.json'),'{private-secret');
+    const status=loadAccountStatus(directory);
+    assert.equal(status,null);
+    const payload={version:'mpdee-costs-v1',provider:'cursor',accountRef:'a'.repeat(32),quality:'complete',events:[]};
+    writeFileSync(path.join(directory,`${payload.accountRef}-1-2.json`),JSON.stringify(payload));
+    let calls=0;
+    const result=await flushOutbox({directory,endpoint:new URL('https://example.invalid/api/costs/ingest'),token:'fixture-only',send:async(_url,_token,body)=>{
+      calls++;assert.deepEqual(JSON.parse(body),payload);assert.ok(!body.includes('private-secret'));
+      return {ok:true,acknowledgement:{received:0,added:0,revised:0,duplicate:0,unassigned:0,quality:'complete'}};
+    }});
+    assert.deepEqual(result,{uploaded:1,skipped:0,failed:0});assert.equal(calls,1);
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+test('empty and acknowledged queues do not invent new usage upload timestamps',async()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-upload-timestamp-'));
+  try {
+    const status=await completedStatus();
+    const endpoint=new URL('https://example.invalid/api/costs/ingest');
+    let calls=0;
+    const send=async()=>{calls++;return {ok:true,acknowledgement:{received:0,added:0,revised:0,duplicate:0,unassigned:0,quality:'complete'}};};
+    const apply=async time=>{
+      const result=await flushOutbox({directory,endpoint,token:'fixture-only',send});
+      status.uploadState=result.failed?'failed':'success';
+      saveAccountStatus(directory,status,{uploaded:result.uploaded,uploadFinishedAt:time});
+      return result;
+    };
+    assert.deepEqual(await apply('2026-09-28T10:00:00.000Z'),{uploaded:0,skipped:0,failed:0});
+    assert.equal(status.uploadState,'success');
+    assert.equal(status.lastUploadSuccessAt,undefined);
+    const payload={version:'mpdee-costs-v1',provider:'cursor',accountRef:'a'.repeat(32),quality:'complete',events:[]};
+    writeFileSync(path.join(directory,`${payload.accountRef}-1-2.json`),JSON.stringify(payload));
+    const uploadedAt='2026-09-28T11:00:00.000Z';
+    assert.deepEqual(await apply(uploadedAt),{uploaded:1,skipped:0,failed:0});
+    assert.equal(status.lastUploadSuccessAt,uploadedAt);
+    assert.deepEqual(await apply('2026-09-28T12:00:00.000Z'),{uploaded:0,skipped:1,failed:0});
+    assert.equal(status.lastUploadSuccessAt,uploadedAt);
+    assert.equal(calls,1);
+    assert.equal(status.finishedAt,'2026-09-27T10:00:00.000Z');
+    const partialAt='2026-09-28T13:00:00.000Z';
+    status.uploadState='failed';
+    saveAccountStatus(directory,status,{uploaded:1,uploadFinishedAt:partialAt});
+    assert.equal(status.lastUploadSuccessAt,partialAt);
+    assert.equal(status.uploadState,'failed');
+  } finally {rmSync(directory,{recursive:true,force:true});}
 });

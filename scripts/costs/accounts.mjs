@@ -152,7 +152,61 @@ export async function collectActiveAccount({ current, load, verify, collect, per
     finishedAt:now(), accounts };
 }
 
-export function saveAccountStatus(directory, status) {
+/** Project a local report onto the only fields permitted to leave this computer. */
+export function loadAccountStatus(directory, now = Date.now()) {
+  try {
+    const raw = readFileSync(path.join(directory, 'accounts-status.json'), 'utf8');
+    if (Buffer.byteLength(raw) > 16384) return null;
+    const value = JSON.parse(raw);
+    const states = ['inactive','missing_session','identity_unverified','identity_mismatch','collection_failed','success'];
+    const dateAllowed = date => validDate(date) && Date.parse(date) <= now + 300000;
+    if (!value || value.version !== 1 || value.expected !== 4 || !Number.isInteger(value.succeeded) || value.succeeded < 0 || value.succeeded > 4 ||
+        !dateAllowed(value.finishedAt) || !['success','failed','not_requested'].includes(value.uploadState) || !Array.isArray(value.accounts) || value.accounts.length !== 4) return null;
+    const report = {version:1,expected:4,succeeded:value.succeeded,finishedAt:value.finishedAt,uploadState:value.uploadState,accounts:[]};
+    if (value.mode !== undefined) {
+      if (value.mode !== 'active_account') return null;
+      report.mode = value.mode;
+    }
+    if (value.activeAccount !== undefined) {
+      if (!EXPECTED_ACCOUNTS.includes(value.activeAccount)) return null;
+      report.activeAccount = value.activeAccount;
+    }
+    if (value.lastUploadSuccessAt !== undefined) {
+      if (!dateAllowed(value.lastUploadSuccessAt)) return null;
+      report.lastUploadSuccessAt = value.lastUploadSuccessAt;
+    }
+    const emails = new Set(), refs = new Set();
+    for (const item of value.accounts) {
+      if (!item || !EXPECTED_ACCOUNTS.includes(item.email) || emails.has(item.email) || !states.includes(item.state) ||
+          !dateAllowed(item.startedAt) || !dateAllowed(item.finishedAt) || Date.parse(item.startedAt) > Date.parse(item.finishedAt) || Date.parse(item.finishedAt) > Date.parse(value.finishedAt)) return null;
+      emails.add(item.email);
+      const account = {email:item.email,startedAt:item.startedAt,finishedAt:item.finishedAt,state:item.state};
+      if (item.accountRef !== undefined) {
+        if (typeof item.accountRef !== 'string' || !/^[a-f0-9]{32}$/.test(item.accountRef) || refs.has(item.accountRef)) return null;
+        refs.add(item.accountRef); account.accountRef = item.accountRef;
+      }
+      if (item.state === 'success' && !account.accountRef) return null;
+      for (const key of ['lastSuccessAt','coveredThrough']) {
+        if (item[key] !== undefined) {
+          if (!dateAllowed(item[key]) || Date.parse(item[key]) > Date.parse(value.finishedAt)) return null;
+          account[key] = item[key];
+        }
+      }
+      if (item.catchingUp !== undefined) {
+        if (typeof item.catchingUp !== 'boolean') return null;
+        account.catchingUp = item.catchingUp;
+      }
+      report.accounts.push(account);
+    }
+    if (report.accounts.filter(account => account.state === 'success').length !== report.succeeded) return null;
+    if (report.mode === 'active_account') {
+      if (report.succeeded > 1 || report.accounts.some(account => account.email !== report.activeAccount && account.state !== 'inactive')) return null;
+    } else if (report.activeAccount || report.accounts.some(account => account.state === 'inactive')) return null;
+    return report;
+  } catch { return null; } // Invalid status never blocks retrying already sanitized outbox files.
+}
+
+export function saveAccountStatus(directory, status, { uploaded = 0, uploadFinishedAt = new Date().toISOString() } = {}) {
   const target = path.join(directory, 'accounts-status.json');
   let previous;
   try { previous = JSON.parse(readFileSync(target, 'utf8')); } catch { /* History is optional; never recover secrets or arbitrary fields. */ }
@@ -163,7 +217,9 @@ export function saveAccountStatus(directory, status) {
     }
     if (typeof account.catchingUp !== 'boolean' && typeof prior?.catchingUp === 'boolean') account.catchingUp = prior.catchingUp;
   }
-  if (status.uploadState === 'success') status.lastUploadSuccessAt = status.finishedAt;
+  // A clean queue or a health-report POST is not a usage upload. A partial run
+  // may still contain acknowledged uploads while its overall state stays failed.
+  if (Number.isSafeInteger(uploaded) && uploaded > 0 && validDate(uploadFinishedAt)) status.lastUploadSuccessAt = uploadFinishedAt;
   else if (validDate(previous?.lastUploadSuccessAt)) status.lastUploadSuccessAt = previous.lastUploadSuccessAt;
   const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, JSON.stringify(status, null, 2), { mode:0o600 });
@@ -171,5 +227,6 @@ export function saveAccountStatus(directory, status) {
 }
 
 function validDate(value) {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && Number.isFinite(Date.parse(value));
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString() === (value.includes('.') ? value : value.replace('Z','.000Z'));
 }

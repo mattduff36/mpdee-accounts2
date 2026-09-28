@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCursorCredentials, verifyCursorIdentity, buildConversationProjectIndex, postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
-import { registerCurrentAccount, collectActiveAccount, loadAccountCredential, saveAccountCredential, saveAccountStatus, EXPECTED_ACCOUNTS, normalizeEmail } from './accounts.mjs';
+import { registerCurrentAccount, collectActiveAccount, loadAccountCredential, saveAccountCredential, saveAccountStatus, loadAccountStatus, EXPECTED_ACCOUNTS, normalizeEmail } from './accounts.mjs';
 import { saveDesktopProfile, validateDesktopProfileBinding } from './desktop-profiles.mjs';
 import { sendUpload } from './upload.mjs';
 import { sanitizeCursorEvent } from './sanitize.mjs';
@@ -112,7 +112,8 @@ async function main() {
   mkdirSync(directory,{recursive:true,mode:0o700});
   const releaseLock = acquireProcessLock(directory);
   try {
-    let accountStatus = null;
+    // Upload-only retries retain the original collection dates and account states.
+    let accountStatus = flushOnly ? loadAccountStatus(directory) : null;
     const outcome = await collectThenFlush({
       collect: flushOnly ? null : async () => {
         let current = null;
@@ -129,8 +130,9 @@ async function main() {
     const { collectionError, flushError, flushResult } = outcome;
     if (accountStatus) {
       accountStatus.uploadState = !upload ? 'not_requested' : (flushError || flushResult?.failed ? 'failed' : 'success');
-      saveAccountStatus(directory, accountStatus);
+      saveAccountStatus(directory, accountStatus, { uploaded:flushResult?.uploaded ?? 0 });
     }
+    if (flushOnly && !accountStatus) console.log('Collection status unavailable; outbox upload was attempted without publishing an unverified report.');
     if (accountStatus && upload) {
       // Publish fixed health metadata only; keep collection results even if reporting fails.
       try {

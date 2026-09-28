@@ -24,6 +24,8 @@ export const importSchema = z.object({
 export type ImportPayload = z.infer<typeof importSchema>
 export type Normalized = ReturnType<typeof normalize>[number]
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+// Exact provider labels for subscription-covered usage; never infer from plan spend.
+const INCLUDED_CURSOR_KINDS = new Set(['USAGE_EVENT_KIND_INCLUDED_IN_ULTRA', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS'])
 export function normalize(input: ImportPayload) {
   if (input.fxGbp && (Number(input.fxGbp) <= 0 || Number(input.fxGbp) > 100)) throw new Error('Invalid GBP exchange rate')
   const counts = new Map<string, number>()
@@ -50,11 +52,9 @@ export function normalize(input: ImportPayload) {
     let reason: string | null = null
     const currency = input.provider === 'cursor' ? 'USD' : event.currency ?? 'USD'
     if (input.provider === 'cursor') {
-      funding = event.kind === 'USAGE_EVENT_KIND_INCLUDED_IN_ULTRA' ? 'included' : event.kind === 'USAGE_EVENT_KIND_USAGE_BASED' ? 'on-demand' : 'unknown'
-      const free = event.isTokenBasedCall === false && event.chargedCents != null && Number(event.chargedCents) === 0 && !event.tokenUsage
+      funding = INCLUDED_CURSOR_KINDS.has(event.kind ?? '') ? 'included' : event.kind === 'USAGE_EVENT_KIND_USAGE_BASED' ? 'on-demand' : 'unknown'
       nominal = event.tokenUsage?.totalCents == null ? null : decimalUnits(event.tokenUsage.totalCents, 5)
       cash = funding === 'included' ? BigInt(0) : event.chargedCents == null ? null : decimalUnits(event.chargedCents, 5)
-      if (free) { nominal = BigInt(0); cash = BigInt(0) }
       if (funding === 'unknown') reason = 'Unknown funding label'
       if (nominal === null || cash === null) reason = 'Missing provider monetary value; review required'
       if ((nominal !== null && nominal < BigInt(0)) || (cash !== null && cash < BigInt(0))) throw new Error('Negative Cursor usage must be imported as a reviewed adjustment')
