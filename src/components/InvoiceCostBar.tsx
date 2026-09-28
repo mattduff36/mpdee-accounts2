@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { formatCurrency } from '@/lib/format'
 export function InvoiceCostBar({ invoiceId, netPence, cost, associated, incomplete }: { invoiceId: string; netPence: number; cost?: { direct: number; subscription: number }; associated: boolean; incomplete: boolean }) {
   if (!associated) return <Link href={`/costs/analysis?invoice=${invoiceId}#invoice-links`} className="mt-3 block border-t border-slate-200 pt-2 text-xs font-medium text-blue-700 hover:underline">Link project and service period to see costs →</Link>
+  if (!cost) return <Link href={`/costs/analysis?invoice=${invoiceId}#allocations`} className="mt-3 block border-t border-amber-200 pt-2 text-xs font-medium text-amber-800 hover:underline">Service period linked · cost evidence not yet allocated →</Link>
   const direct = cost?.direct || 0, subscription = cost?.subscription || 0, total = direct + subscription
   const percentage = netPence > 0 ? total / netPence * 100 : null
   const scale = Math.max(netPence, 1)

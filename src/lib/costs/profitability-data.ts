@@ -17,6 +17,10 @@ export async function getInvoiceCostData() {
   }).map(e=>e.id))
   const validAllocations = allocations.filter(a=>!invalidExpenseIds.has(a.expenseId))
   const result = invoiceCosts(eligible, validAllocations)
+  // Linking dates does not establish a zero cost. Keep missing expense evidence unavailable.
+  for (const invoice of eligible) {
+    if (!validAllocations.some(a => a.projectId === invoice.projectId && a.periodStart <= invoice.periodEnd && a.periodEnd >= invoice.periodStart)) result.costs.delete(invoice.id)
+  }
   const allocationSum = validAllocations.reduce((n,a)=>n+a.amountPence,0)
   const unallocatedCount = grouped.filter(e => invalidExpenseIds.has(e.id) || e.netAmount !== e.costAllocations.reduce((n,a)=>n+a.amountPence,0)).length
   return { ...result, associations, allocations: validAllocations, invalidAllocationCount: invalidExpenseIds.size, unallocatedCount, unallocatedPence: (expenseTotals._sum.netAmount || 0) - allocationSum }
