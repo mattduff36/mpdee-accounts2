@@ -93,3 +93,21 @@ The approved experience update is tracked in experience-improvements.md. Costs p
 /costs/analysis uses existing GBP net Expenses as its single cost source. Invoice project/service-period associations and expense shares are explicitly reviewed. Subscription shares can be proposed from included nominal usage, but incomplete coverage remains provisional; unassigned shares remain unallocated. Overlapping invoice periods split daily costs by original net invoice value and preserve incurred costs after credit notes. Multi-project invoice splitting is not yet supported.
 
 ECB reference estimates use each event date or a preceding published working day (maximum seven days), with imported rates taking precedence. Administrators can retain those dated references for repeatable estimates. These are not actual bank settlement rates. Missing values remain unavailable. No invoice or original expense is automatically created or altered by this analysis.
+
+## Four-account collection and session renewal
+
+Every collection run now checks these four expected Cursor accounts independently: `admin@mpdee.co.uk`, `mattduff36@gmail.com`, `matt.mpdee@gmail.com`, and `mattduff36@hotmail.com`. Signing into one account does not provide access to the others. Missing or expired sessions are reported explicitly; one successful account cannot mark the whole run successful. Available accounts still collect and retained files still upload when another account fails.
+
+For each account, sign into the **Cursor desktop application** as that account, then run locally:
+
+```powershell
+node scripts/costs/collect.mjs --register-current
+```
+
+This checks the provider's authenticated `/api/auth/me` response against Cursor's cached account email and requires a verified email. It stores a Windows-user-bound DPAPI-encrypted session under `%LOCALAPPDATA%\mpdee-accounts\cursor-accounts`. No browser cookie extraction, credentials in command arguments, repository credentials, or hosted Cursor sessions are used. Repeat for each account, then restore the preferred desktop login. Ordinary collection also retains the currently verified desktop session automatically. Sessions may expire or be revoked; repeat registration for the affected account after signing in again. Do not paste credentials into chat. On machines using a package-redirected AppData directory, run registration with the same verified `LOCALAPPDATA` storage base used by the scheduled runner.
+
+Existing account references and outbox files are preserved. The provider's current identity ID is bound separately from the original account reference, so registering a retained session does not re-key historical usage. Every retained credential must match its expected email and bound provider identity before collection can move that account's checkpoint. Per-account collection/checkpoint isolation and bounded backfill remain in place. Initial collection defaults to two days for a newly registered account; recover older history with reviewed `--from`/`--to` chunks rather than assuming registration recovered historical data.
+
+The local outbox's `accounts-status.json` reports all four account states and the latest upload result. With upload enabled, the collector sends only this sanitized health metadata to `/api/costs/collector-status` using the existing dedicated ingestion token. The status contains no session credentials, raw provider errors, or prompts. A failed health upload leaves both local usage and status intact and causes a nonzero exit; collection success is distinct from upload success. The installed scheduled snapshot must be updated deliberately after the hosted health endpoint is deployed. The old snapshot does not acquire these changes just because Git was updated.
+
+Session renewal preserves the first verified account reference even if Cursor rotates its authentication reference. A changed provider subject under the same email, or an unreadable/corrupt protected binding, is held for review and never overwritten automatically. If the current desktop session has expired, a retained session can still be used after independently verifying its pinned identity; a confirmed identity mismatch never triggers that fallback.

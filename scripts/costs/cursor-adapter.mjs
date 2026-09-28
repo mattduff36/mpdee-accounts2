@@ -33,6 +33,7 @@ export function readCursorCredentials() {
     const authId = read("cursorAuth/stripeMembershipAuthId");
     if (!accessToken || !authId) return null;
     return {
+      email: read("cursorAuth/cachedEmail"),
       cookie: `WorkosCursorSessionToken=${authId}%3A%3A${accessToken}`,
       providerAccountRef: createHash("sha256")
         .update(`cursor:${authId}`)
@@ -122,4 +123,21 @@ export function projectKeyForWorkspace() {
   const drive = cwd.slice(0, 1).toLowerCase();
   const rest = cwd.slice(2).replace(/\\/g, "-").replace(/\//g, "-").replace(/^-/, "");
   return `${drive}-${rest}`;
+}
+
+/** Verify a retained session against the provider before attributing any usage. */
+export async function verifyCursorIdentity(credentials) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${DASHBOARD_ORIGIN}/api/auth/me`, {
+      headers:{ Cookie:credentials.cookie, Referer:`${DASHBOARD_ORIGIN}/dashboard` },
+      redirect:'manual', signal:controller.signal,
+    });
+    if (!response.ok) throw new Error('Cursor account identity could not be verified.');
+    const identity = await response.json();
+    if (typeof identity?.email !== 'string' || identity.email_verified !== true || typeof identity?.sub !== 'string' || !identity.sub) throw new Error('Cursor account identity response is unsupported.');
+    return { email:identity.email, identityKey:createHash("sha256").update(`cursor-identity:${identity.sub}`).digest("hex") };
+  } catch { throw new Error('Cursor account identity could not be verified.'); }
+  finally { clearTimeout(timer); }
 }

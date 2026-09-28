@@ -4,7 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readCursorCredentials, buildConversationProjectIndex, postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
+import { readCursorCredentials, verifyCursorIdentity, buildConversationProjectIndex, postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
+import { registerCurrentAccount, collectAllAccounts, loadAccountCredential, saveAccountCredential, saveAccountStatus } from './accounts.mjs';
 import { sendUpload } from './upload.mjs';
 import { sanitizeCursorEvent } from './sanitize.mjs';
 import { fetchCompleteWindow } from './collection.mjs';
@@ -43,6 +44,13 @@ async function collect({ credentials, directory, days, backfill }) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args.includes('--register-current')) {
+    let credentials;
+    try { credentials = readCursorCredentials(); } catch { throw new Error('Sign in to an expected Cursor desktop account first.'); }
+    const email = await registerCurrentAccount({current:credentials, load:loadAccountCredential, verify:verifyCursorIdentity, persist:saveAccountCredential});
+    console.log(`Registered protected local Cursor session for ${email}. No usage collected.`);
+    return;
+  }
   const valueFor = flag => { const at = args.indexOf(flag); return at < 0 ? null : args[at + 1]; };
   const daysValue = valueFor('--days');
   const days = daysValue === null ? 2 : Number(daysValue);
@@ -63,15 +71,34 @@ async function main() {
   mkdirSync(directory,{recursive:true,mode:0o700});
   const releaseLock = acquireProcessLock(directory);
   try {
+    let accountStatus = null;
     const outcome = await collectThenFlush({
       collect: flushOnly ? null : async () => {
-        const credentials = readCursorCredentials();
-        if (!credentials) throw new Error('Sign in to Cursor on this computer first.');
-        await collect({ credentials, directory, days, backfill });
+        let current = null;
+        try { current = readCursorCredentials(); } catch { /* Retained sessions can still collect if desktop is unavailable. */ }
+        const status = await collectAllAccounts({ current, load:loadAccountCredential, verify:verifyCursorIdentity,
+          persist:saveAccountCredential, collect:credentials => collect({ credentials, directory, days, backfill }) });
+        saveAccountStatus(directory, status);
+        accountStatus = status;
+        for (const account of status.accounts) console.log(`Cursor ${account.email}: ${account.state}.`);
+        if (status.succeeded !== status.expected) throw new Error(`${status.succeeded}/${status.expected} expected Cursor accounts collected; inspect accounts-status.json locally.`);
       },
       flush: upload ? async () => flushOutbox({ directory, endpoint, token, send: (url, ingestToken, body) => sendUpload(url, ingestToken, body, process.env.COSTS_VERCEL_BYPASS_TOKEN) }) : null,
     });
     const { collectionError, flushError, flushResult } = outcome;
+    if (accountStatus) {
+      accountStatus.uploadState = !upload ? 'not_requested' : (flushError || flushResult?.failed ? 'failed' : 'success');
+      saveAccountStatus(directory, accountStatus);
+    }
+    if (accountStatus && upload) {
+      // Publish fixed health metadata only; keep collection results even if reporting fails.
+      try {
+        const statusUrl = new URL('/api/costs/collector-status', endpoint);
+        const response = await fetch(statusUrl, { method:'POST', redirect:'manual', signal:AbortSignal.timeout(20000),
+          headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`}, body:JSON.stringify(accountStatus) });
+        if (!response.ok) throw new Error();
+      } catch { throw new Error('Collection status could not be published; local usage and status were retained.'); }
+    }
     if (flushResult) console.log(`Outbox flush: ${flushResult.uploaded} uploaded, ${flushResult.skipped} skipped, ${flushResult.failed} failed.`);
     if (flushError) throw new Error('Outbox flush could not complete; local files were retained for retry.');
     if (collectionError) throw new Error(`Collection did not complete: ${collectionError.message}`);

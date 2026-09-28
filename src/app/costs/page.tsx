@@ -8,6 +8,7 @@ import { ledgerFx, convertUnits, formatGbpUnits } from '@/lib/costs/fx'
 import { unitsText } from '@/lib/costs/money'
 import { buttonClass, inputClass, panel } from './ui'
 import {RefreshFigures} from './RefreshFigures'
+import {CollectorCoverage} from './CollectorCoverage'
 export const dynamic = 'force-dynamic'
 export default async function CostsPage({searchParams}:{searchParams:{month?:string;project?:string;page?:string}}) {
  const user=await requireAuth()
@@ -24,6 +25,7 @@ export default async function CostsPage({searchParams}:{searchParams:{month?:str
  <PageHeader title="Project costs" description="Usage value, additional provider charges and estimated client charges in pounds."><RefreshFigures loadedAt={Date.now()}/><a className={buttonClass} href={'/api/costs/export?'+new URLSearchParams({month:data.month,project:searchParams.project??''})}>Export source ledger</a></PageHeader>
  <p className="text-sm leading-relaxed text-slate-600">Saved rates apply automatically to usage on or after their effective date. Refresh figures reloads usage already imported into Accounts. New Cursor usage is collected by the scheduled collector on your PC; this button does not start local collection.</p>
  <form className={`${panel} grid items-end gap-4 sm:grid-cols-[1fr_2fr_auto]`}><label className="text-sm">Month (UTC)<input className={inputClass} type="month" name="month" defaultValue={data.month}/></label><label className="text-sm">Project<select className={inputClass} name="project" defaultValue={searchParams.project??''}><option value="">All projects</option><option value="unassigned">Unassigned</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><button className={buttonClass}>Apply filters</button></form>
+ <CollectorCoverage/>
  <div className="grid gap-4 md:grid-cols-3">{[
  {title:'Nominal usage value',value:sum(rows,'nominalGbp'),note:'Nominal value of work consumed. Included usage is covered by your subscription.'},
  {title:'Additional provider charges',value:sum(rows,'cashGbp'),note:'Per-request or infrastructure charges imported here. Subscription bills are in Expenses.'},
