@@ -12,6 +12,7 @@ const eventSchema = z.object({
   sourceId: z.string().min(1).max(200).optional(), resourceRef: z.string().max(250).nullable().optional(),
   nominalAmount: amount, billedAmount: amount, currency: z.enum(['USD','GBP','EUR']).optional(),
   description: z.string().max(300).optional(),
+  taskContext: z.object({ method: z.literal('local-topic-rules-v1'), topics: z.array(z.enum(['Interface and usability','Costs and accounting','Database work','Authentication and access','Deployment and infrastructure','Testing and debugging','Scheduling and resources'])).max(3) }).strict().optional(),
 })
 export const importSchema = z.object({
   version: z.literal('mpdee-costs-v1').optional(), provider: z.enum(['cursor','vercel','supabase','manual']).default('cursor'),
@@ -70,7 +71,21 @@ export function normalize(input: ImportPayload) {
     if ((counts.get(baseKey) ?? 0) > 1) reason = 'Ambiguous identity collision; review required'
     const fxGbp = currency === 'GBP' ? '1' : input.fxGbp ?? null
     const evidence = { ...event, timestamp: occurredAt }
-    const checksum = hash(JSON.stringify({ funding, nominal: nominal?.toString(), cash: cash?.toString(), currency, occurredAt, model: event.model, description: event.description, reason, tokens: event.tokenUsage && [event.tokenUsage.inputTokens,event.tokenUsage.outputTokens,event.tokenUsage.cacheReadTokens,event.tokenUsage.cacheWriteTokens] }))
+    const checksum = revisionChecksum({ funding, nominal, cash, currency, occurredAt, evidence, reason })
     return { sourceKey, occurredAt, model: event.model ?? null, conversationId: event.conversationId ?? null, workspaceRef: event.workspaceRef ?? null, resourceRef: event.resourceRef ?? null, funding, nominal, cash, currency, fxGbp, evidence, checksum, quality: reason ? 'review' : input.quality, reason }
   })
+}
+
+function revisionChecksum(row: { funding: string; nominal: bigint | null; cash: bigint | null; currency: string; occurredAt: string; evidence: ImportPayload['events'][number]; reason: string | null }) {
+  const event = row.evidence
+  return hash(JSON.stringify({ funding: row.funding, nominal: row.nominal?.toString(), cash: row.cash?.toString(), currency: row.currency, occurredAt: row.occurredAt, model: event.model, description: event.description, taskContext: event.taskContext, reason: row.reason, tokens: event.tokenUsage && [event.tokenUsage.inputTokens,event.tokenUsage.outputTokens,event.tokenUsage.cacheReadTokens,event.tokenUsage.cacheWriteTokens] }))
+}
+// Older outbox payloads must not erase local context or repeatedly create revisions.
+// Validate stored evidence too; never copy an arbitrary JSON object into the new row.
+export function retainTaskContext(row: Normalized, priorEvidence: unknown) {
+  if (row.evidence.taskContext || !priorEvidence || typeof priorEvidence !== 'object' || Array.isArray(priorEvidence)) return
+  const parsed = eventSchema.shape.taskContext.safeParse((priorEvidence as Record<string, unknown>).taskContext)
+  if (!parsed.success || !parsed.data) return
+  row.evidence.taskContext = parsed.data
+  row.checksum = revisionChecksum(row)
 }

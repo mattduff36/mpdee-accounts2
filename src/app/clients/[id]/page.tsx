@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { prisma } from "@/lib/db"
 import { canWrite, requireAuth } from "@/lib/auth"
 import { visibleInvoiceWhere, visiblePaymentWhere } from "@/lib/invoice-visibility"
@@ -30,8 +31,9 @@ export default async function ClientDetailPage({
     },
   })
   if (!client) notFound()
-  const totalInvoiced = client.invoices.reduce((sum, invoice) => sum + invoice.total, 0)
-  const totalPaid = client.invoices.reduce((sum, invoice) => sum + invoice.amountPaid, 0)
+  const issuedInvoices = client.invoices.filter((invoice) => !["draft", "cancelled"].includes(invoice.status))
+  const totalInvoiced = issuedInvoices.reduce((sum, invoice) => sum + invoice.total, 0)
+  const totalPaid = issuedInvoices.reduce((sum, invoice) => sum + invoice.amountPaid, 0)
   const outstanding = client.invoices
     .filter((invoice) => ["sent", "viewed", "partial", "overdue"].includes(invoice.status))
     .reduce((sum, invoice) => sum + invoice.balanceDue, 0)
@@ -39,7 +41,7 @@ export default async function ClientDetailPage({
   const months = buildMonthTabs(groups, {
     includeCurrent: false,
     includeKeys: [sp.month],
-    preview: (items) => formatCurrency(sumBy(items, (item) => item.total)),
+    preview: (items) => formatCurrency(sumBy(items.filter((item) => !["draft", "cancelled"].includes(item.status)), (item) => item.total)),
   })
   const activeMonth = resolveActiveMonth(months.map((month) => month.key), sp.month)
   const visible = groups.get(activeMonth) ?? []
@@ -52,13 +54,13 @@ export default async function ClientDetailPage({
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-gray-500">Total Invoiced</p>
+            <p className="text-sm text-gray-500">Issued invoices</p>
             <p className="text-2xl font-bold">{formatCurrency(totalInvoiced)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-gray-500">Total Paid</p>
+            <p className="text-sm text-gray-500">Paid against issued invoices</p>
             <p className="text-2xl font-bold text-green-600">{formatCurrency(totalPaid)}</p>
           </CardContent>
         </Card>
@@ -69,6 +71,7 @@ export default async function ClientDetailPage({
           </CardContent>
         </Card>
       </div>
+      <p className="text-xs text-slate-500">Totals include VAT and exclude draft and cancelled invoices. All invoice statuses remain visible below for reference.</p>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -127,7 +130,7 @@ export default async function ClientDetailPage({
                 visible.length > 0
                   ? {
                       label: `${monthLabel(activeMonth)} · ${pluralize(visible.length, "invoice")}`,
-                      items: [{ label: "Invoiced", value: formatCurrency(sumBy(visible, (item) => item.total)) }],
+                      items: [{ label: "Invoiced", value: formatCurrency(sumBy(visible.filter((item) => !["draft", "cancelled"].includes(item.status)), (item) => item.total)) }],
                     }
                   : undefined
               }
@@ -135,7 +138,7 @@ export default async function ClientDetailPage({
               {visible.map((invoice) => (
                 <tr key={invoice.id} className="border-b hover:bg-gray-50">
                   <td className="px-4 py-3">
-                    <p className="text-sm font-medium">{invoice.invoiceNumber}</p>
+                    <Link href={`/invoices/${invoice.id}`} className="text-sm font-medium text-blue-700 hover:underline">{invoice.invoiceNumber}</Link>
                     <p className="text-xs text-gray-500">{formatDate(invoice.issueDate)}</p>
                   </td>
                   <td className="px-4 py-3 text-right text-sm font-medium">{formatCurrency(invoice.total)}</td>

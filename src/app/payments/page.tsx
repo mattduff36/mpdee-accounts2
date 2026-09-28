@@ -6,6 +6,8 @@ import { PagedDataTable } from "@/components/PagedDataTable"
 import { buildMonthTabs, groupByMonth, monthLabel, pluralize, resolveActiveMonth, sumBy } from "@/lib/monthly-list"
 import Link from "next/link"
 
+const signedAmount = (payment: { amount: number; isRefund: boolean }) => payment.isRefund ? -Math.abs(payment.amount) : payment.amount
+
 export default async function PaymentsPage({
   searchParams,
 }: {
@@ -20,14 +22,14 @@ export default async function PaymentsPage({
   const groups = groupByMonth(payments, (payment) => payment.date)
   const months = buildMonthTabs(groups, {
     includeKeys: [sp.month],
-    preview: (items) => formatCurrency(sumBy(items, (item) => item.amount)),
+    preview: (items) => formatCurrency(sumBy(items, signedAmount)),
   })
   const activeMonth = resolveActiveMonth(months.map((month) => month.key), sp.month)
   const visible = groups.get(activeMonth) ?? []
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Payments" description="Track and manage payments" />
+      <PageHeader title="Payments" description="Recorded customer collections by payment date, including partial payments and refunds." />
       <PagedDataTable
         path="/payments"
         months={months}
@@ -46,7 +48,7 @@ export default async function PaymentsPage({
         }
         subtotals={{
           label: `${monthLabel(activeMonth)} · ${pluralize(visible.length, "payment")}`,
-          items: [{ label: "Received", value: formatCurrency(sumBy(visible, (item) => item.amount)), tone: "success" }],
+          items: [{ label: "Net received after refunds", value: formatCurrency(sumBy(visible, signedAmount)), tone: sumBy(visible, signedAmount) >= 0 ? "success" : "danger" }],
         }}
       >
         {visible.map((payment) => (
@@ -62,7 +64,7 @@ export default async function PaymentsPage({
               )}
             </td>
             <td className="px-4 py-3">{payment.client?.name || "-"}</td>
-            <td className="px-4 py-3 text-right font-medium">{formatCurrency(payment.amount)}</td>
+            <td className={`px-4 py-3 text-right font-medium ${signedAmount(payment) < 0 ? "text-red-700" : "text-emerald-700"}`}>{formatCurrency(signedAmount(payment))}{payment.isRefund && <span className="mt-1 block text-xs font-normal">Refund</span>}</td>
             <td className="px-4 py-3 capitalize">{payment.method.replace(/_/g, " ")}</td>
             <td className="px-4 py-3 text-gray-500">{payment.reference || "-"}</td>
           </tr>

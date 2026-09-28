@@ -1,3 +1,5 @@
+import { InvoiceCostBar } from '@/components/InvoiceCostBar'
+import { getInvoiceCostData } from '@/lib/costs/profitability-data'
 import { prisma } from "@/lib/db"
 import { canWrite, requireAuth } from "@/lib/auth"
 import { andVisibleInvoice, visibleInvoiceWhere } from "@/lib/invoice-visibility"
@@ -20,7 +22,7 @@ async function getDashboardData() {
   const overdueWhere = andVisibleInvoice({ status: { in: ["sent", "viewed", "partial", "overdue"] }, dueDate: { lt: now } })
   const overdueInvoices = await prisma.invoice.aggregate({ _sum: { balanceDue: true }, where: overdueWhere })
   const expensesThisMonth = await prisma.expense.aggregate({ _sum: { grossAmount: true }, where: { date: month } })
-  const recentInvoices = await prisma.invoice.findMany({ where: visibleInvoiceWhere, take: 5, orderBy: { createdAt: "desc" }, include: { client: { select: { name: true } } } })
+  const recentInvoices = await prisma.invoice.findMany({ where: visibleInvoiceWhere, take: 5, orderBy: { createdAt: "desc" }, include: { creditNotes: true, client: { select: { name: true } } } })
   const recentExpenses = await prisma.expense.findMany({ take: 5, orderBy: [{ date: "desc" }, { id: "desc" }], include: { category: { select: { name: true } } } })
   const upcomingDue = await prisma.invoice.findMany({ where: andVisibleInvoice({ status: { in: ["sent", "viewed", "partial"] }, dueDate: { gte: now } }), take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
   const overdue = await prisma.invoice.findMany({ where: overdueWhere, take: 5, orderBy: { dueDate: "asc" }, include: { client: { select: { name: true } } } })
@@ -76,7 +78,7 @@ function MetricCard({ title, value, icon: Icon, tone }: MetricCardProps) {
 export default async function DashboardPage() {
   const user = await requireAuth()
   const writable = canWrite(user)
-  const data = await getDashboardData()
+  const [data, costData] = await Promise.all([getDashboardData(), getInvoiceCostData()])
   return <div className="space-y-6">
     <PageHeader title="Dashboard" description="Track cashflow, open invoices, and the next accounting actions at a glance." />
     <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -87,7 +89,7 @@ export default async function DashboardPage() {
     </div>
     <div className="grid gap-4 lg:grid-cols-2">
       <Card><CardHeader><CardTitle>Recent Invoices</CardTitle></CardHeader><CardContent>
-        {data.recentInvoices.length === 0 ? <p className="text-sm text-slate-500">No invoices yet</p> : <div className="space-y-2">{data.recentInvoices.map(inv => <div key={inv.id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 p-3"><div><p className="text-sm font-medium text-slate-900">{inv.invoiceNumber}</p><p className="text-xs text-slate-500">{inv.client.name}</p></div><div className="text-right"><p className="text-sm font-medium text-slate-900">{formatCurrency(inv.total)}</p><StatusBadge status={inv.status} /></div></div>)}</div>}
+        {data.recentInvoices.length === 0 ? <p className="text-sm text-slate-500">No invoices yet</p> : <div className="space-y-2">{data.recentInvoices.map(inv => <div key={inv.id} className="rounded-xl border border-slate-100 bg-slate-50/70 p-3"><div className="flex items-center justify-between gap-3"><div><Link href={`/invoices/${inv.id}`} className="text-sm font-medium text-slate-900 hover:text-blue-700">{inv.invoiceNumber}</Link><p className="text-xs text-slate-500">{inv.client.name}</p></div><div className="text-right"><p className="text-sm font-medium text-slate-900">{formatCurrency(inv.total)}</p><StatusBadge status={inv.status} /></div></div><InvoiceCostBar invoiceId={inv.id} netPence={inv.total-inv.vatTotal-inv.creditNotes.filter(c=>!['draft','cancelled','void'].includes(c.status)).reduce((n,c)=>n+c.total-c.vatTotal,0)} cost={costData.costs.get(inv.id)} associated={costData.associations.some(a=>a.invoiceId===inv.id)} incomplete={costData.unallocatedCount>0||costData.allocations.some(a=>a.note.startsWith('Provisional'))}/></div>)}</div>}
       </CardContent></Card>
       <Card><CardHeader><CardTitle>Recent Expenses</CardTitle></CardHeader><CardContent>
         {data.recentExpenses.length === 0 ? <p className="text-sm text-slate-500">No expenses yet</p> : <div className="space-y-2">{data.recentExpenses.map(exp => <div key={exp.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3"><div className="min-w-0"><p className="break-words text-sm font-medium text-slate-900">{exp.description}</p><p className="mt-1 text-xs text-slate-500">{formatDate(exp.date)} · {exp.category.name}</p></div><p className="shrink-0 text-sm font-medium tabular-nums text-slate-900">{formatCurrency(exp.grossAmount)}</p></div>)}</div>}

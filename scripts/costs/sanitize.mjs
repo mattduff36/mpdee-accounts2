@@ -1,4 +1,5 @@
-const EVENT_FIELDS = new Set(['timestamp','model','conversationId','kind','isTokenBasedCall','chargedCents','usageBasedCosts','cursorTokenFee','tokenUsage','workspaceRef']);
+import { CONTEXT_LABELS } from "./task-context.mjs";
+const EVENT_FIELDS = new Set(['timestamp','model','conversationId','kind','isTokenBasedCall','chargedCents','usageBasedCosts','cursorTokenFee','tokenUsage','workspaceRef','taskContext']);
 const TOKEN_FIELDS = new Set(['inputTokens','outputTokens','cacheReadTokens','cacheWriteTokens','totalCents']);
 const AMOUNT_STRING = /^-?\d+(\.\d+)?$/;
 const COST_STRING = /^\$?\d+(\.\d+)?$/;
@@ -17,6 +18,7 @@ function validTimestamp(value) {
 }
 export function isSanitizedCursorEvent(event) {
   if (!event || typeof event !== 'object' || Array.isArray(event) || Object.keys(event).some(key => !EVENT_FIELDS.has(key))) return false;
+  if (event.taskContext !== undefined && (!event.taskContext || event.taskContext.method !== 'local-topic-rules-v1' || Object.keys(event.taskContext).some(key => !['method','topics'].includes(key)) || !Array.isArray(event.taskContext.topics) || event.taskContext.topics.length > 3 || event.taskContext.topics.some(topic => !CONTEXT_LABELS.includes(topic)))) return false;
   if (!validTimestamp(event.timestamp)) return false;
   if (event.model !== undefined && (typeof event.model !== 'string' || event.model.length > 120)) return false;
   if (event.conversationId !== undefined && event.conversationId !== null && (typeof event.conversationId !== 'string' || event.conversationId.length > 160)) return false;
@@ -43,6 +45,8 @@ export function sanitizeCursorEvent(event, index) {
   }
   const workspace = index.get(event.conversationId);
   if (workspace) result.workspaceRef = workspace;
+  const context = index.context?.get(event.conversationId);
+  if (context) result.taskContext = context;
   if (!isSanitizedCursorEvent(result)) throw new Error('Cursor returned an invalid event field. Data was not saved.');
   return result;
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
-import { importSchema, normalize } from './normalize'
+import { importSchema, normalize, retainTaskContext } from './normalize'
 import { chargeUnits, type Policy } from './money'
 
 // A single transaction lock serialises imports/mapping changes, including overlapping collectors.
@@ -36,6 +36,7 @@ export async function importUsage(raw: unknown, userId?: string) {
       const attribution = unique.length > 1 ? 'conflict' : projectId ? 'mapped' : 'unassigned'
       const existing = existingByKey.get(row.sourceKey)
       const previous = existing?.revisions[0]
+      retainTaskContext(row, previous?.evidence)
       let record = existing ?? {
         id: `cost_${randomUUID()}`, provider: input.provider, accountRef: input.accountRef, sourceKey: row.sourceKey,
         occurredAt: new Date(row.occurredAt), model: row.model, conversationId: row.conversationId,

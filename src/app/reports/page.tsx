@@ -4,12 +4,13 @@ import Link from "next/link"
 import { TrendingUp, BarChart3, PieChart, AlertTriangle, FileText, Users } from "lucide-react"
 
 const reports = [
-  { href: "/reports/profit-loss", title: "Profit & Loss", description: "Revenue, expenses and net profit summary", icon: TrendingUp },
-  { href: "/reports/sales", title: "Sales by Month", description: "Monthly invoicing and payment trends", icon: BarChart3 },
+  { href: "/costs/analysis", title: "Business & Project Analysis", description: "Project cost allocation, invoice margins and business trends", icon: TrendingUp },
+  { href: "/reports/profit-loss", title: "Collections & Spending", description: "Recorded customer collections compared with dated expenses", icon: TrendingUp },
+  { href: "/reports/sales", title: "Sales & Collections", description: "Monthly invoicing, receipt-date collections and current balances", icon: BarChart3 },
   { href: "/reports/expenses", title: "Expenses by Category", description: "Breakdown of spending by category", icon: PieChart },
   { href: "/reports/debtors", title: "Aged Debtors", description: "Outstanding invoices by age buckets", icon: AlertTriangle },
   { href: "/reports/vat", title: "VAT Summary", description: "Output tax, input tax and net VAT due", icon: FileText },
-  { href: "/reports/clients", title: "Client Revenue", description: "Revenue breakdown by client", icon: Users },
+  { href: "/reports/clients", title: "Client Invoicing", description: "Issued invoices, paid amounts and outstanding balances by client", icon: Users },
 ]
 
 export default function ReportsPage() {

@@ -6,7 +6,7 @@ The cost module remains a review ledger: it does not automatically create accoun
 
 ## What is implemented
 
-- `/costs`: account-wide monthly ledger, project filter, native-currency nominal value/provider cost/client estimate, source coverage and unassigned counts.
+- `/costs`: account-wide monthly ledger, project filter, GBP-first nominal value/provider cost/client estimate, dated FX provenance, source coverage and held counts.
 - `/costs/projects`: projects linked to existing clients, client default policies, project overrides, effective dates, exact workspace/conversation/provider-resource mappings.
 - `/costs/review`: manual attribution with a recorded reason. Reimports preserve manual decisions.
 - `/costs/import`: authenticated JSON import. `/api/costs/ingest` also accepts a dedicated bearer token. `/api/costs/export` produces a review JSON export.
@@ -28,7 +28,7 @@ Requires Node 22.13+ and a signed-in Cursor desktop on Windows/macOS/Linux. Run 
 npm run costs:collect -- --days 2
 ```
 
-Files are written under `%LOCALAPPDATA%\mpdee-accounts\costs-outbox` on Windows, or `~/.local/share/mpdee-accounts/costs-outbox` elsewhere. They contain private usage metadata and conversation IDs but no owningUser ID, prompts, cookies, access tokens or state database. Do not commit them. The collector reads only conversation filenames to map workspaces. Duplicate conversation references across workspaces remain unassigned.
+Files are written under `%LOCALAPPDATA%\mpdee-accounts\costs-outbox` on Windows, or `~/.local/share/mpdee-accounts/costs-outbox` elsewhere. They contain private usage metadata and conversation IDs but no owningUser ID, prompts, cookies, access tokens or state database. Do not commit them. The collector uses conversation filenames to map workspaces. With owner approval, it also reads bounded local transcript content to produce fixed-vocabulary task topics; raw titles, prompts, names and credentials are never copied into the payload. Duplicate conversation references across workspaces remain unassigned.
 
 Upload files through the production app, or configure `COSTS_INGEST_URL` (HTTPS, ending `/api/costs/ingest`) and a dedicated 32+ character `COSTS_INGEST_TOKEN` locally and on the destination Production deployment, then run:
 
@@ -85,3 +85,11 @@ TypeScript checks and cost unit tests cover precise cents, 60%/110% charging, in
 Run `scripts/costs/install-task.ps1` locally to install an hourly/logon collection-only snapshot. It refuses to overwrite an existing task. With packaged Windows apps, pass `-StorageBase` pointing to the verified physical local-cache directory if AppData is redirected; Task Scheduler cannot use the package-virtual path. The configuration and status are in `mpdee-accounts/costs-automation` below that storage base. The runner sets the same storage base for its outbox and never inherits upload credentials or destination accidentally. Updating repository collector code does not update the installed snapshot: validate and copy the collector modules deliberately, then verify a scheduled run. Keep the saved local files during updates. Upload activation remains separate from installation.
 
 See `project-read-api.md` for the implemented, locally verified project-scoped read API; hosted activation and the iTrader reader switch remain pending.
+
+## Experience and analysis update
+
+The approved experience update is tracked in experience-improvements.md. Costs pages share persistent navigation. Projects use a single atomic-save matrix with verified local identity suggestions and dated rate history. Review groups conversations and shows rule-based evidence scores, never statistical probabilities or automatic assignments.
+
+/costs/analysis uses existing GBP net Expenses as its single cost source. Invoice project/service-period associations and expense shares are explicitly reviewed. Subscription shares can be proposed from included nominal usage, but incomplete coverage remains provisional; unassigned shares remain unallocated. Overlapping invoice periods split daily costs by original net invoice value and preserve incurred costs after credit notes. Multi-project invoice splitting is not yet supported.
+
+ECB reference estimates use each event date or a preceding published working day (maximum seven days), with imported rates taking precedence. Administrators can retain those dated references for repeatable estimates. These are not actual bank settlement rates. Missing values remain unavailable. No invoice or original expense is automatically created or altered by this analysis.

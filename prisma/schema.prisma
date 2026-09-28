@@ -125,6 +125,7 @@ model Invoice {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   items         InvoiceItem[]
+  costAssociation InvoiceCostAssociation?
   payments      Payment[]
   creditNotes   CreditNote[]
   emailLogs     EmailLog[]
@@ -210,6 +211,7 @@ model Expense {
   invoiceId         String?
   notes             String?
   isArchived        Boolean         @default(false)
+  costAllocations CostExpenseAllocation[]
   bankTransactionId String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
@@ -445,6 +447,8 @@ model CostProject {
   repository String?
   archived  Boolean @default(false)
   createdAt DateTime @default(now())
+  invoiceAssociations InvoiceCostAssociation[]
+  expenseAllocations CostExpenseAllocation[]
   mappings  CostProjectMapping[]
   policies  CostPolicy[]
   events    CostUsageEvent[]
@@ -525,4 +529,44 @@ model CostImportRun {
   unassigned  Int
   quality     String
   createdAt   DateTime @default(now())
+}
+
+// Explicit, reviewable service period. Dates include both endpoints.
+model InvoiceCostAssociation {
+  invoiceId String @id
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  projectId String
+  project CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  periodStart DateTime @db.Date
+  periodEnd DateTime @db.Date
+  note String
+  updatedAt DateTime @updatedAt
+  @@index([projectId, periodStart, periodEnd])
+}
+
+// Allocations subdivide the existing expense, never create a second expense.
+model CostExpenseAllocation {
+  id String @id @default(cuid())
+  expenseId String
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  projectId String
+  project CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  amountPence Int
+  kind String
+  periodStart DateTime @db.Date
+  periodEnd DateTime @db.Date
+  note String
+  updatedAt DateTime @updatedAt
+  @@unique([expenseId, projectId])
+  @@index([projectId, periodStart, periodEnd])
+}
+
+model CostFxRate {
+  id String @id @default(cuid())
+  currency String
+  date DateTime @db.Date
+  gbpRate Decimal @db.Decimal(20, 8)
+  source String
+  fetchedAt DateTime @default(now())
+  @@unique([currency, date])
 }

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { readTaskContext } from "./task-context.mjs";
 import { retryTransient } from "./reliability.mjs";
 
 export const DASHBOARD_ORIGIN = "https://cursor.com";
@@ -85,6 +86,7 @@ export async function postJson(url, body, cookie) {
 export function buildConversationProjectIndex() {
   const root = path.join(homedir(), ".cursor", "projects");
   const index = new Map();
+  index.context = new Map();
   let projects;
   try {
     projects = readdirSync(root);
@@ -100,9 +102,16 @@ export function buildConversationProjectIndex() {
       continue;
     }
     for (const entry of entries) {
-      const id = entry.replace(/\.jsonl$/, "");
+      const id = entry.replace(/\.(jsonl|txt)$/, "");
       // A conversation appearing under two workspaces is ambiguous, never last-writer-wins.
       index.set(id, index.has(id) && index.get(id) !== project ? null : project);
+      if (index.get(id)) {
+        const candidate = path.join(transcripts, entry);
+        let file = candidate;
+        try { if (statSync(candidate).isDirectory()) file = path.join(candidate, `${id}.jsonl`); } catch { continue; }
+        const context = readTaskContext(file);
+        if (context) index.context.set(id, context);
+      } else index.context.delete(id);
     }
   }
   return index;

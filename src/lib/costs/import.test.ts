@@ -44,5 +44,19 @@ test('import replay, correction, enrichment, manual attribution and collision ho
     await importUsage(payload)
     assert.equal(revisions.filter(r=>r.eventId===events[0].id).at(-1).quality,'review','smaller windows must not clear ambiguity')
     assert.equal(locks,8)
+    // Enrichment changes evidence once; an older outbox replay retains it unchanged.
+    const freshEvent={...event,conversationId:'context-conversation'}
+    const context={method:'local-topic-rules-v1',topics:['Database work']}
+    await importUsage({...payload,events:[{...freshEvent,taskContext:context}]})
+    const contextRecord=events.find(e=>e.conversationId==='context-conversation')
+    const beforeContextRevisions=revisions.filter(r=>r.eventId===contextRecord.id).length
+    r=await importUsage({...payload,events:[freshEvent]})
+    assert.equal(r.duplicate,1)
+    assert.equal(revisions.filter(r=>r.eventId===contextRecord.id).length,beforeContextRevisions)
+    // A genuine monetary correction still revises, preserving the context.
+    r=await importUsage({...payload,events:[{...freshEvent,chargedCents:'300'}]})
+    assert.equal(r.revised,1)
+    assert.deepEqual(revisions.filter(r=>r.eventId===contextRecord.id).at(-1).evidence.taskContext,context)
+
   } finally { prisma.$transaction=original }
 })
