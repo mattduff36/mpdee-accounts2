@@ -7,7 +7,7 @@ import { sendUpload } from './upload.mjs';
 import { sanitizeCursorEvent, isSanitizedCursorEvent } from './sanitize.mjs';
 import { postJson, EVENTS_ENDPOINT } from './cursor-adapter.mjs';
 import { fetchCompleteWindow } from './collection.mjs';
-import { collectionWindows, DAY_MS, flushOutbox, retryTransient, acquireProcessLock, loadCheckpoint, saveCheckpoint, parseBackfillRange, parseIngestEndpoint, collectThenFlush, checkpointAfterBackfill, saveWindowPayload, isSanitizedCursorPayload } from './reliability.mjs';
+import { collectionWindows, DAY_MS, flushOutbox, retryTransient, acquireProcessLock, loadCheckpoint, saveCheckpoint, parseBackfillRange, parseIngestEndpoint, collectThenFlush, checkpointAfterBackfill, advanceContiguousCheckpoint, saveWindowPayload, isSanitizedCursorPayload } from './reliability.mjs';
 
 function fixtureDir() { return mkdtempSync(path.join(os.tmpdir(), 'costs-recovery-')); }
 const ack = (received, { added = received, revised = 0, duplicate = 0, unassigned = 0 } = {}) => ({ ok: true, acknowledgement: { received, added, revised, duplicate, unassigned, quality: 'complete' } });
@@ -23,7 +23,32 @@ test('collection re-fetches two closed days and includes the current partial UTC
     { from: 100 * DAY_MS, to: 100 * DAY_MS + 123 },
   ]);
   assert.equal(collectionWindows({ now, initialDays: 2 })[0].from, 98 * DAY_MS);
-  assert.throws(() => collectionWindows({ now, checkpoint: 54 * DAY_MS }), /more than 45 days behind/);
+});
+
+test('a hundred-day gap recovers a bounded oldest batch and refreshes recent usage separately', () => {
+  const now = 200 * DAY_MS + 123;
+  let checkpoint = 100 * DAY_MS;
+  const windows = collectionWindows({ now, checkpoint });
+  assert.equal(windows.length, 10);
+  assert.deepEqual(windows.slice(0, 7).map(w => w.from / DAY_MS), [98, 99, 100, 101, 102, 103, 104]);
+  assert.deepEqual(windows.slice(7).map(w => w.from / DAY_MS), [198, 199, 200]);
+  assert.equal(windows.at(-1).to, now);
+  for (const window of windows) checkpoint = advanceContiguousCheckpoint({ checkpoint, ...window, now });
+  assert.equal(checkpoint, 105 * DAY_MS, 'recent windows cannot jump the unresolved gap');
+  assert.equal(new Set(windows.map(w => w.from)).size, windows.length);
+});
+
+test('a missing day prevents cursor advancement and current-day collection stays separate', () => {
+  const now = 105 * DAY_MS + 123;
+  let checkpoint = 100 * DAY_MS;
+  checkpoint = advanceContiguousCheckpoint({ checkpoint, from: 102 * DAY_MS, to: 103 * DAY_MS, now });
+  assert.equal(checkpoint, 100 * DAY_MS);
+  checkpoint = advanceContiguousCheckpoint({ checkpoint, from: 99 * DAY_MS, to: 100 * DAY_MS, now });
+  assert.equal(checkpoint, 100 * DAY_MS, 'overlap cannot regress the cursor');
+  checkpoint = advanceContiguousCheckpoint({ checkpoint, from: 100 * DAY_MS, to: 101 * DAY_MS, now });
+  assert.equal(checkpoint, 101 * DAY_MS);
+  assert.equal(advanceContiguousCheckpoint({ checkpoint:105 * DAY_MS, from:105 * DAY_MS, to:now, now }), 105 * DAY_MS);
+  assert.throws(() => advanceContiguousCheckpoint({ checkpoint, from:102 * DAY_MS, to:now + 1, now }), /Invalid/);
 });
 
 test('explicit backfills are valid UTC date ranges bounded to 45 days', () => {
@@ -161,18 +186,18 @@ test('flush accepts null tokenUsage, rejects secret-bearing fields, and receipts
     const firstEndpoint = new URL('https://preview-one.example/api/costs/ingest');
     let calls = 0;
     const first = await flushOutbox({ directory, endpoint: firstEndpoint, token: 'unused', send: async (_url, _token, body) => { calls++; assert.equal(body, JSON.stringify(payload)); return ack(1, { added: 1, unassigned: 1 }); } });
-    assert.deepEqual(first, { uploaded: 1, skipped: 4, failed: 0 });
+    assert.deepEqual(first, { uploaded: 1, skipped: 0, failed: 3 });
     assert.equal(calls, 1);
     const second = await flushOutbox({ directory, endpoint: firstEndpoint, token: 'unused', send: async () => { calls++; return ack(1); } });
-    assert.deepEqual(second, { uploaded: 0, skipped: 5, failed: 0 });
+    assert.deepEqual(second, { uploaded: 0, skipped: 1, failed: 3 });
     assert.equal(calls, 1);
     const otherDestination = await flushOutbox({ directory, endpoint: new URL('https://preview-two.example/api/costs/ingest'), token: 'unused', send: async () => { calls++; return ack(1); } });
-    assert.deepEqual(otherDestination, { uploaded: 1, skipped: 4, failed: 0 });
+    assert.deepEqual(otherDestination, { uploaded: 1, skipped: 0, failed: 3 });
     assert.equal(calls, 2);
     const changed = JSON.stringify({ ...payload, events: [{ timestamp: '2026-09-28T00:00:00Z', chargedCents: 5, tokenUsage: null }] });
     writeFileSync(completePath, changed);
     const revised = await flushOutbox({ directory, endpoint: firstEndpoint, token: 'unused', send: async () => { calls++; return ack(1); } });
-    assert.deepEqual(revised, { uploaded: 1, skipped: 4, failed: 0 });
+    assert.deepEqual(revised, { uploaded: 1, skipped: 0, failed: 3 });
     assert.equal(calls, 3);
     assert.ok(readdirSync(directory).some(name => name.includes('.receipt.json')));
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -191,6 +216,21 @@ test('bad acknowledgement is retained without blocking later eligible files', as
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('corrupt and oversized canonical files fail while local metadata is excluded', async () => {
+  const directory = fixtureDir();
+  try {
+    const accountRef = 'f'.repeat(32);
+    const corrupt = path.join(directory, `${accountRef}-1-2.json`);
+    writeFileSync(corrupt, '{');
+    writeFileSync(path.join(directory, `${accountRef}-3-4.json`), JSON.stringify({ padding:'x'.repeat(3_000_001) }));
+    for (const name of ['accounts-status.json', `${accountRef}.checkpoint.json`, `${accountRef}-5-6.partial.json`, `${accountRef}-1-2.json.dest.receipt.json`, 'unrelated.json']) writeFileSync(path.join(directory, name), '{');
+    const result = await flushOutbox({ directory, endpoint:new URL('https://preview.example/api/costs/ingest'), token:'unused', send:async()=>assert.fail('invalid files must not upload') });
+    assert.deepEqual(result, { uploaded:0, skipped:0, failed:2 });
+    assert.equal(readFileSync(corrupt, 'utf8'), '{');
+    assert.equal(readdirSync(directory).length, 7);
+  } finally { rmSync(directory, { recursive:true, force:true }); }
+});
+
 test('flush retains payload and records failure without a receipt after transport errors', async () => {
   const directory = fixtureDir();
   try {
@@ -207,7 +247,7 @@ test('flush retains payload and records failure without a receipt after transpor
 test('contiguous bounded backfill chunks recover a stale checkpoint without jumping a gap', () => {
   const now = 100 * DAY_MS + 123;
   let checkpoint = 54 * DAY_MS;
-  assert.throws(() => collectionWindows({ now, checkpoint }), /more than 45 days behind/);
+  assert.equal(collectionWindows({ now, checkpoint }).length, 10);
   const first = { from: checkpoint, to: 99 * DAY_MS };
   checkpoint = checkpointAfterBackfill({ checkpoint, backfill: first, now });
   assert.equal(checkpoint, 99 * DAY_MS);

@@ -6,6 +6,7 @@ import { isSanitizedCursorEvent } from './sanitize.mjs';
 export const DAY_MS = 86_400_000;
 const MAX_CATCHUP_DAYS = 45;
 const OVERLAP_DAYS = 2;
+const AUTOMATIC_BATCH_DAYS = 7;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function retryTransient(operation, { attempts = 3, baseDelayMs = 250, sleepFn = sleep } = {}) {
@@ -102,6 +103,17 @@ export function checkpointAfterBackfill({ checkpoint, backfill, now = Date.now()
   if (backfill.from <= checkpoint && completedThrough > checkpoint) return completedThrough;
   return checkpoint;
 }
+// Only completed windows contiguous with the durable cursor can advance it.
+// Recent refreshes after an unresolved historical gap must never conceal that gap.
+export function advanceContiguousCheckpoint({ checkpoint, from, to, now = Date.now() }) {
+  if (!Number.isSafeInteger(checkpoint) || checkpoint < 0 || checkpoint % DAY_MS !== 0 ||
+      !Number.isSafeInteger(from) || from < 0 || from % DAY_MS !== 0 ||
+      !Number.isSafeInteger(to) || to <= from || to > now || checkpoint > Math.floor(now / DAY_MS) * DAY_MS) {
+    throw new Error('Invalid contiguous collection checkpoint window.');
+  }
+  const completedThrough = Math.floor(to / DAY_MS) * DAY_MS;
+  return from <= checkpoint && completedThrough > checkpoint ? completedThrough : checkpoint;
+}
 export function collectionWindows({ now = Date.now(), checkpoint, initialDays = 2, backfill = null }) {
   if (!Number.isInteger(initialDays) || initialDays < 1 || initialDays > MAX_CATCHUP_DAYS) throw new Error('Use --days between 1 and 45');
   const todayStart = Math.floor(now / DAY_MS) * DAY_MS;
@@ -110,11 +122,15 @@ export function collectionWindows({ now = Date.now(), checkpoint, initialDays = 
     return splitWindows(backfill.from, backfill.to);
   }
   if (checkpoint !== null && checkpoint !== undefined && (!Number.isSafeInteger(checkpoint) || checkpoint % DAY_MS !== 0 || checkpoint > todayStart)) throw new Error('Local costs checkpoint is invalid for the current date.');
-  if (checkpoint !== null && checkpoint !== undefined && todayStart - checkpoint > MAX_CATCHUP_DAYS * DAY_MS) throw new Error('Costs collection is more than 45 days behind. No checkpoint was advanced; use an explicit reviewed --from/--to backfill before continuing.');
   const start = checkpoint === null || checkpoint === undefined
     ? todayStart - initialDays * DAY_MS
     : Math.max(0, checkpoint - OVERLAP_DAYS * DAY_MS);
-  return splitWindows(start, now);
+  // Bound automatic recovery even after a long offline period, while still
+  // refreshing recent usage. The caller retains the contiguous checkpoint.
+  const oldest = splitWindows(start, Math.min(now, start + AUTOMATIC_BATCH_DAYS * DAY_MS));
+  const recent = splitWindows(Math.max(start, todayStart - OVERLAP_DAYS * DAY_MS), now);
+  return [...new Map([...oldest, ...recent].map(window => [window.from, window])).values()]
+    .sort((a, b) => a.from - b.from);
 }
 
 export function outboxWindowPath(directory, accountRef, from, complete) {
@@ -153,14 +169,15 @@ function validAcknowledgement(result, eventCount) {
 
 export async function flushOutbox({ directory, endpoint, token, send, accountRef = null }) {
   const dest = destinationId(endpoint);
-  const files = readdirSync(directory).filter(name => name.endsWith('.json') && !name.endsWith('.receipt.json') && !name.endsWith('.checkpoint.json') && !name.endsWith('.partial.json')).sort();
+  const files = readdirSync(directory).filter(name => /^[a-f0-9]{32}-\d+-\d+\.json$/.test(name)).sort();
   let uploaded = 0, skipped = 0, failed = 0;
   for (const name of files) {
     const file = path.join(directory, name);
+    if (accountRef && !name.startsWith(`${accountRef}-`)) { skipped++; continue; }
     let body, payload;
     try { body = readFileSync(file, 'utf8'); payload = JSON.parse(body); }
-    catch { skipped++; continue; }
-    if (Buffer.byteLength(body) > 3_000_000 || !isSanitizedCursorPayload(payload, name, accountRef)) { skipped++; continue; }
+    catch { failed++; continue; }
+    if (Buffer.byteLength(body) > 3_000_000 || !isSanitizedCursorPayload(payload, name, accountRef)) { failed++; continue; }
     const hash = createHash('sha256').update(body).digest('hex');
     const receiptPath = `${file}.${dest}.receipt.json`;
     try {

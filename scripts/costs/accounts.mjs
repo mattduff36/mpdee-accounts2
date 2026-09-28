@@ -66,14 +66,15 @@ export async function registerCurrentAccount({ current, load, verify, persist })
   return email;
 }
 
-export async function collectAllAccounts({ current, load, verify, collect, persist = () => {}, now = () => new Date().toISOString() }) {
+export async function collectAllAccounts({ current, currentForAccount, load, verify, collect, persist = () => {}, now = () => new Date().toISOString() }) {
   const results = [];
   for (const email of EXPECTED_ACCOUNTS) {
     const result = { email, startedAt:now(), state:'identity_unverified' };
     try {
-      const isCurrent = normalizeEmail(current?.email) === email;
+      const active = currentForAccount ? await currentForAccount(email) : current;
+      const isCurrent = normalizeEmail(active?.email) === email;
       const stored = await load(email);
-      let credential = isCurrent ? current : stored;
+      let credential = isCurrent ? active : stored;
       if (!credential) result.state = 'missing_session';
       if (credential) {
         result.state = 'identity_unverified';
@@ -86,27 +87,51 @@ export async function collectAllAccounts({ current, load, verify, collect, persi
           usingCurrent = false;
           identity = await verify(stored);
         }
-        if (usingCurrent) credential = bindCurrentCredential(email, current, identity, stored);
+        if (usingCurrent) credential = bindCurrentCredential(email, active, identity, stored);
         if (!identityMatches(email, credential, identity)) result.state = 'identity_mismatch';
         else {
           // Registration is deliberately before collection: a provider outage must
           // not lose an already verified account when the desktop switches users.
           await persist(credential);
           result.state = 'collection_failed';
-          await collect(credential);
+          const coverage = await collect(credential);
+          if (validDate(coverage?.coveredThrough)) result.coveredThrough = coverage.coveredThrough;
+          if (typeof coverage?.catchingUp === 'boolean') result.catchingUp = coverage.catchingUp;
           result.state = 'success';
           result.accountRef = credential.providerAccountRef;
         }
       }
-    } catch { /* Report only fixed status strings; provider errors may contain secrets. */ }
+    } catch (error) {
+      // Copy only validated progress, never provider error text or credentials.
+      if (result.state === 'collection_failed') {
+        if (validDate(error?.coverage?.coveredThrough)) result.coveredThrough = error.coverage.coveredThrough;
+        if (typeof error?.coverage?.catchingUp === 'boolean') result.catchingUp = error.coverage.catchingUp;
+      }
+    }
     result.finishedAt = now();
+    if (result.state === 'success') result.lastSuccessAt = result.finishedAt;
     results.push(result);
   }
   return { version:1, expected:EXPECTED_ACCOUNTS.length, succeeded:results.filter(r => r.state === 'success').length, finishedAt:now(), accounts:results };
 }
 export function saveAccountStatus(directory, status) {
   const target = path.join(directory, 'accounts-status.json');
+  let previous;
+  try { previous = JSON.parse(readFileSync(target, 'utf8')); } catch { /* History is optional; never recover secrets or arbitrary fields. */ }
+  for (const account of status.accounts) {
+    const prior = Array.isArray(previous?.accounts) ? previous.accounts.find(item => item?.email === account.email) : null;
+    for (const key of ['lastSuccessAt', 'coveredThrough']) {
+      if (!validDate(account[key]) && validDate(prior?.[key])) account[key] = prior[key];
+    }
+    if (typeof account.catchingUp !== 'boolean' && typeof prior?.catchingUp === 'boolean') account.catchingUp = prior.catchingUp;
+  }
+  if (status.uploadState === 'success') status.lastUploadSuccessAt = status.finishedAt;
+  else if (validDate(previous?.lastUploadSuccessAt)) status.lastUploadSuccessAt = previous.lastUploadSuccessAt;
   const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, JSON.stringify(status, null, 2), { mode:0o600 });
   renameSync(temporary, target);
+}
+
+function validDate(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && Number.isFinite(Date.parse(value));
 }

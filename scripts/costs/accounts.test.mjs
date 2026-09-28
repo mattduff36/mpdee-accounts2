@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EXPECTED_ACCOUNTS, collectAllAccounts, identityMatches, registerCurrentAccount, loadAccountCredential } from './accounts.mjs';
+import { EXPECTED_ACCOUNTS, collectAllAccounts, identityMatches, registerCurrentAccount, loadAccountCredential, saveAccountStatus } from './accounts.mjs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 const credential = index => ({ email:EXPECTED_ACCOUNTS[index], providerAccountRef:String(index).repeat(32), identityKey:String(index).repeat(64), cookie:'private-test-value' });
 const identity = value => ({ email:value.email, identityKey:value.identityKey });
 test('all four independent accounts collect under their stable identities', async () => {
@@ -67,4 +70,29 @@ test('unreadable existing binding blocks capture and collection without overwrit
   const result=await collectAllAccounts({current:credential(0),load,verify:identity,persist:()=>writes++,collect:()=>{throw new Error('must not collect');}});
   assert.equal(result.succeeded,0);assert.ok(result.accounts.every(value=>value.state==='identity_unverified'));
   await assert.rejects(registerCurrentAccount({current:credential(0),load,verify:identity,persist:()=>writes++}));assert.equal(writes,0);
+});
+test('independent desktop candidates rotate sessions without rekeying accounts',async()=>{
+  const seen=[];
+  const result=await collectAllAccounts({current:null,currentForAccount:email=>({...credential(EXPECTED_ACCOUNTS.indexOf(email)),providerAccountRef:'f'.repeat(32)}),load:email=>credential(EXPECTED_ACCOUNTS.indexOf(email)),verify:identity,collect:value=>seen.push(value.providerAccountRef)});
+  assert.equal(result.succeeded,4);assert.equal(new Set(seen).size,4);
+});
+
+test('profile read failures isolate accounts and retain sanitized partial coverage',async()=>{
+  const result=await collectAllAccounts({currentForAccount:email=>{if(email===EXPECTED_ACCOUNTS[0])throw new Error('private-test-value');return credential(EXPECTED_ACCOUNTS.indexOf(email));},load:()=>null,verify:identity,collect:()=>{const error=new Error('private-test-value');error.coverage={coveredThrough:'2026-09-01T00:00:00.000Z',catchingUp:true,cookie:'private-test-value'};throw error;}});
+  assert.equal(result.succeeded,0);assert.equal(result.accounts[0].state,'identity_unverified');assert.equal(result.accounts[1].coveredThrough,'2026-09-01T00:00:00.000Z');assert.equal(result.accounts[1].catchingUp,true);assert.ok(!JSON.stringify(result).includes('private-test-value'));
+});
+
+test('failed runs preserve last success and new partial coverage without leaking arbitrary fields',()=>{
+  const directory=mkdtempSync(path.join(tmpdir(),'cursor-health-'));
+  try {
+    const first={finishedAt:'2026-09-27T10:00:00.000Z',uploadState:'success',accounts:[{email:EXPECTED_ACCOUNTS[0],state:'success',lastSuccessAt:'2026-09-27T10:00:00.000Z',coveredThrough:'2026-09-20T00:00:00.000Z',catchingUp:true}]};
+    saveAccountStatus(directory,first);
+    const next={finishedAt:'2026-09-28T10:00:00.000Z',uploadState:'failed',accounts:[{email:EXPECTED_ACCOUNTS[0],state:'collection_failed',coveredThrough:'2026-09-23T00:00:00.000Z',catchingUp:true}]};
+    saveAccountStatus(directory,next);
+    const saved=JSON.parse(readFileSync(path.join(directory,'accounts-status.json'),'utf8'));
+    assert.equal(saved.lastUploadSuccessAt,first.finishedAt);
+    assert.equal(saved.accounts[0].lastSuccessAt,first.finishedAt);
+    assert.equal(saved.accounts[0].coveredThrough,next.accounts[0].coveredThrough);
+    assert.equal(saved.accounts[0].catchingUp,true);
+  } finally { rmSync(directory,{recursive:true,force:true}); }
 });

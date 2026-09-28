@@ -111,3 +111,23 @@ Existing account references and outbox files are preserved. The provider's curre
 The local outbox's `accounts-status.json` reports all four account states and the latest upload result. With upload enabled, the collector sends only this sanitized health metadata to `/api/costs/collector-status` using the existing dedicated ingestion token. The status contains no session credentials, raw provider errors, or prompts. A failed health upload leaves both local usage and status intact and causes a nonzero exit; collection success is distinct from upload success. The installed scheduled snapshot must be updated deliberately after the hosted health endpoint is deployed. The old snapshot does not acquire these changes just because Git was updated.
 
 Session renewal preserves the first verified account reference even if Cursor rotates its authentication reference. A changed provider subject under the same email, or an unreadable/corrupt protected binding, is held for review and never overwritten automatically. If the current desktop session has expired, a retained session can still be used after independently verifying its pinned identity; a confirmed identity mismatch never triggers that fallback.
+
+### Separate desktop sessions: awaiting a real four-account test
+
+Live testing showed that signing out of the shared Cursor desktop profile revokes its retained session. Saving a session is therefore not proof of ongoing four-account access. The automated Chrome sign-in experiment encountered a Cloudflare block and is not part of the installed collector. Do not retry or disguise that blocked authentication flow.
+
+Cursor staff have recommended separate desktop instances with `--user-data-dir` for separate account logins. This remains an unverified option on this PC. Do not interrupt an active Cursor task to test it. After the owner completes ordinary sign-in in an isolated desktop profile, the collector can register that explicit profile:
+
+```powershell
+node scripts/costs/collect.mjs --register-desktop ACCOUNT_EMAIL ABSOLUTE_USER_DATA_DIRECTORY
+```
+
+Registration verifies the requested email and live provider identity before retaining the encrypted session. A nonsecret local registry maps each account to its own absolute user-data directory. The collector reads that profile's SQLite database read-only on every run, re-verifies the provider identity, and preserves the original account reference when sessions rotate. Duplicate directories, changed identities and corrupt bindings fail closed. Never commit or upload desktop profiles or sessions.
+
+All four accounts remain expected, including infrequently used Hotmail. A configured profile does not establish successful collection: require real requests for each identity, repeat scheduled runs and a session-renewal test. The private individual-account usage endpoint is undocumented and sessions can expire. If isolated sessions do not work, retain explicit missing-account status and a reviewed manual-export workflow rather than claiming unattended coverage.
+
+### Recovery and health reporting
+
+Automatic runs process at most seven oldest daily windows (including overlap) plus the latest two completed days and today. A gap longer than 45 days no longer prevents automatic recovery. Failed windows remain pending; later successful windows cannot move the checkpoint across them. Explicit reviewed backfill chunks retain their 45-day limit. New-account history still begins at its requested starting window, not at account creation.
+
+Health reports retain each account's last successful collection and contiguous recovery checkpoint, plus the last successful upload. A successful batch may still be catching up. A checkpoint describes recovery since the configured start; it does not prove all historical usage is available. Corrupt or oversized canonical outbox files count as failures and remain preserved for review, while local status and checkpoint files are excluded from uploads. Deploy the backward-compatible health schema before updating the installed scheduled collector snapshot.

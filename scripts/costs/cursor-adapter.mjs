@@ -11,7 +11,14 @@ export const EVENTS_ENDPOINT =
   `${DASHBOARD_ORIGIN}/api/dashboard/get-filtered-usage-events`;
 const REQUEST_TIMEOUT_MS = 20_000;
 
-function stateDatabasePath() {
+function stateDatabasePath(userDataDir) {
+  if (userDataDir !== undefined) {
+    if (typeof userDataDir !== "string" || !path.isAbsolute(userDataDir) || userDataDir.includes("\0") ||
+        (process.platform === "win32" && !/^(?:[a-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/i.test(userDataDir))) {
+      throw new Error("Cursor desktop profile must be an absolute directory.");
+    }
+    return path.join(userDataDir, "User", "globalStorage", "state.vscdb");
+  }
   const appData =
     process.env.APPDATA ??
     (process.platform === "darwin"
@@ -20,8 +27,8 @@ function stateDatabasePath() {
   return path.join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
 }
 
-export function readCursorCredentials() {
-  const database = new DatabaseSync(stateDatabasePath(), { readOnly: true });
+export function readCursorCredentials(userDataDir) {
+  const database = new DatabaseSync(stateDatabasePath(userDataDir), { readOnly: true });
   try {
     const select = database.prepare("SELECT value FROM ItemTable WHERE key = ?");
     const read = (key) => {
