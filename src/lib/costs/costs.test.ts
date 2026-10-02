@@ -72,6 +72,14 @@ test('effective-date project override wins over client defaults, future rates do
   assert.equal(resolvePolicy(p,'p','c',new Date('2026-09-26'))?.id,'project')
   assert.equal(resolvePolicy(p,'p','c',new Date('2026-10-01'))?.id,'future')
   assert.equal(resolvePolicy(p,'other',null,new Date('2026-09-26')),null)
+  const closed = [
+    {...policy,id:'open',projectId:'p',clientId:null,effectiveAt:new Date('2026-08-01T00:00:00.000Z'),effectiveUntil:null},
+    {...policy,id:'limited',projectId:'p',clientId:null,effectiveAt:new Date('2026-09-01T00:00:00.000Z'),effectiveUntil:new Date('2026-09-10T00:00:00.000Z')},
+  ]
+  assert.equal(resolvePolicy(closed,'p',null,new Date('2026-08-15T12:00:00.000Z'))?.id,'open')
+  assert.equal(resolvePolicy(closed,'p',null,new Date('2026-09-10T18:00:00.000Z'))?.id,'limited')
+  assert.equal(resolvePolicy(closed,'p',null,new Date('2026-09-11T00:00:00.000Z')),null)
+  assert.equal(resolvePolicy([{...policy,id:'client',projectId:null,clientId:'c',effectiveAt:new Date('2026-01-01')},...closed],'p','c',new Date('2026-09-11T00:00:00.000Z'))?.id,'client')
   assert.equal(monthRange('2026-12').end.toISOString(),'2027-01-01T00:00:00.000Z')
 })
 

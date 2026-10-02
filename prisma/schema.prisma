@@ -497,10 +497,12 @@ model CostPolicy {
   clientId    String?
   client      Client? @relation(fields: [clientId], references: [id], onDelete: Restrict)
   effectiveAt DateTime
+  effectiveUntil DateTime?
   billable    Boolean @default(false)
   includedBaseBps Int @default(5000)
   markupBps   Int @default(0)
   infrastructureMarkupBps Int @default(0)
+  vercelDailyPence Int @default(0)
   createdAt   DateTime @default(now())
   @@unique([scopeKey, effectiveAt])
 }

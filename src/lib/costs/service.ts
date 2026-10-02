@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { importSchema, normalize, retainTaskContext } from './normalize'
 import { chargeUnits, type Policy } from './money'
+import { coversDate } from './project-matrix'
 
 // A single transaction lock serialises imports/mapping changes, including overlapping collectors.
 export async function costTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
@@ -86,10 +87,10 @@ export async function importUsage(raw: unknown, userId?: string) {
     return { id: result.id, received: events.length, added, revised, duplicate, unassigned, quality: input.quality }
   })
 }
-export type DatedPolicy = Policy & { id: string; projectId: string | null; clientId: string | null; effectiveAt: Date }
+export type DatedPolicy = Policy & { id: string; projectId: string | null; clientId: string | null; effectiveAt: Date; effectiveUntil?: Date | null }
 export function resolvePolicy(policies: DatedPolicy[], projectId: string, clientId: string | null, date: Date) {
-  const eligible = policies.filter(p => p.effectiveAt <= date).sort((a,b) => b.effectiveAt.getTime() - a.effectiveAt.getTime())
-  return eligible.find(p => p.projectId === projectId) ?? eligible.find(p => !p.projectId && clientId && p.clientId === clientId) ?? null
+  const match = (peers: DatedPolicy[]) => peers.filter(policy => coversDate(policy, peers, date)).sort((a, b) => b.effectiveAt.getTime() - a.effectiveAt.getTime())[0] ?? null
+  return match(policies.filter(policy => policy.projectId === projectId)) ?? match(policies.filter(policy => !policy.projectId && !!clientId && policy.clientId === clientId))
 }
 export function monthRange(value?: string) {
   const month = value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : new Date().toISOString().slice(0,7)

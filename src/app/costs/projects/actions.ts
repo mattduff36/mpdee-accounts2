@@ -2,7 +2,9 @@
 import { revalidatePath } from 'next/cache'
 import { requireWrite, requireAuth } from '@/lib/auth'
 import { costTransaction } from '@/lib/costs/service'
-import { matrixSchema, mappedProject, policyData } from '@/lib/costs/project-matrix'
+import { matrixSchema, mappedProject, policyData, rangeInput, rangesOverlap, parseUtcDate, coversDate } from '@/lib/costs/project-matrix'
+import { membershipDates, planMembershipRewrite } from '@/lib/costs/membership-lines'
+import { Prisma } from '@prisma/client'
 import { discoveredVercelProjects } from '@/lib/costs/project-inventory'
 export type SaveResult = { ok: boolean; message: string }
 export async function saveMatrix(raw: unknown): Promise<SaveResult> {
@@ -64,6 +66,66 @@ export async function saveMatrix(raw: unknown): Promise<SaveResult> {
     return {ok:false,message:safe?message:'Nothing was saved. Check for a rate already using the same effective date, or reload and try again.'}
   }
 }
+export async function savePolicyRange(raw: unknown): Promise<SaveResult> {
+  await requireWrite()
+  const actor = await requireAuth()
+  const parsed = rangeInput.safeParse(raw)
+  if (!parsed.success || Boolean(parsed.data.projectId) === Boolean(parsed.data.clientId)) return { ok: false, message: 'Choose a project or client, then try again.' }
+  try {
+    const result = await costTransaction(async tx => {
+      const { id, projectId, clientId } = parsed.data
+      const scopeKey = projectId ? `project:${projectId}` : `client:${clientId}`
+      const peers = await tx.costPolicy.findMany({ where: projectId ? { projectId } : { clientId: clientId! } })
+      if (id && !peers.some(policy => policy.id === id)) throw new Error('Choose a rate that still exists, then try again.')
+      const data = policyData(parsed.data)
+      if (peers.some(policy => policy.id !== id && policy.effectiveAt.getTime() === data.effectiveAt.getTime())) throw new Error('Choose a start date that is not already used by another rate.')
+      const proposed = peers.filter(policy => policy.id !== id).map(policy => ({ effectiveAt: policy.effectiveAt, effectiveUntil: policy.effectiveUntil })).concat(data)
+      if (rangesOverlap(proposed)) throw new Error('Choose dates that do not overlap an existing rate.')
+      const saved = id
+        ? await tx.costPolicy.update({ where: { id }, data: { ...data, scopeKey, projectId, clientId: projectId ? null : clientId } })
+        : await tx.costPolicy.create({ data: { ...data, scopeKey, projectId, clientId: projectId ? null : clientId } })
+      const today = new Date().toISOString().slice(0, 10)
+      const savedPeers = peers.filter(policy => policy.id !== saved.id).concat(saved)
+      const dates = membershipDates(saved, savedPeers, today)
+      const targets = projectId ? [{ id: projectId, dates }] : await clientMembershipTargets(tx, clientId!, dates)
+      let updated = 0, added = 0
+      for (const target of targets) {
+        const rows = await tx.costLegacyCharge.findMany({ where: { projectId: target.id, sourceBucket: { startsWith: 'vercel:membership:' } }, select: { id: true, sourceBucket: true, periodStart: true, periodEnd: true, frozenGbpPence: true, sourceRevision: true, sourceEvidence: true } })
+        const plan = planMembershipRewrite(rows, target.dates, saved.vercelDailyPence)
+        for (const change of plan.updates) {
+          const existing = rows.find(row => row.id === change.id)
+          await tx.costLegacyCharge.update({ where: { id: change.id }, data: { frozenGbpPence: change.frozenGbpPence, sourceRevision: change.sourceRevision, sourceChecksum: change.sourceChecksum, sourceEvidence: membershipEvidence(existing?.sourceEvidence, saved.id, saved.vercelDailyPence) } })
+          updated++
+        }
+        for (const change of plan.inserts) {
+          const day = change.sourceBucket.slice(-10)
+          await tx.costLegacyCharge.create({ data: { id: `membership_${target.id}_${day}`, projectId: target.id, sourceSystem: 'mpdee-accounts', sourceDatabaseFingerprint: `project-rate:${target.id}`, sourceKind: 'MANUAL', sourceBucket: change.sourceBucket, sourceRevision: 1, sourceChecksum: change.sourceChecksum, category: 'VERCEL_HOSTING', periodStart: change.periodStart, periodEnd: change.periodEnd, label: 'Vercel Pro membership share', frozenGbpPence: change.frozenGbpPence, invoiceability: 'INVOICEABLE', sourceEvidence: { origin: 'project-rate', policyId: saved.id, dailyPence: saved.vercelDailyPence } satisfies Prisma.InputJsonObject } })
+          added++
+        }
+      }
+      await tx.auditLog.create({ data: { userId: actor.id, action: id ? 'costs.policy.update' : 'costs.policy.create', entityType: 'CostPolicy', entityId: saved.id, details: JSON.stringify({ scopeKey, from: data.effectiveAt.toISOString().slice(0, 10), until: data.effectiveUntil?.toISOString().slice(0, 10) ?? null, vercelDailyPence: data.vercelDailyPence, updated, added }) } })
+      return { from: data.effectiveAt.toISOString().slice(0, 10), updated, added }
+    })
+    revalidatePath('/costs', 'layout')
+    return { ok: true, message: `Saved the rate from ${result.from}. Updated ${result.updated} Vercel membership days and added ${result.added}. Estimates use the saved dates; issued invoices are unchanged.` }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    const safe = ['Choose', 'Included base', 'Percentage'].some(prefix => message.startsWith(prefix))
+    return { ok: false, message: safe ? message : 'Nothing was saved. Check the dates and amounts, or reload and try again.' }
+  }
+}
+function membershipEvidence(existing: Prisma.JsonValue | undefined, policyId: string, dailyPence: number): Prisma.InputJsonObject {
+  const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}
+  return { ...base, rateRevision: { policyId, dailyPence } }
+}
+async function clientMembershipTargets(tx: Prisma.TransactionClient, clientId: string, dates: string[]) {
+  const projects = await tx.costProject.findMany({ where: { clientId, archived: false }, select: { id: true } })
+  const policies = projects.length ? await tx.costPolicy.findMany({ where: { projectId: { in: projects.map(project => project.id) } } }) : []
+  return projects.map(project => {
+    const peers = policies.filter(policy => policy.projectId === project.id)
+    return { id: project.id, dates: dates.filter(day => !peers.some(policy => coversDate(policy, peers, parseUtcDate(day)))) }
+  })
+}
 export async function setupProjects(kind: 'known'|'discovered'): Promise<SaveResult> {
   await requireWrite(); const actor=await requireAuth()
   try {
@@ -86,7 +148,7 @@ export async function setupProjects(kind: 'known'|'discovered'): Promise<SaveRes
         if(kind==='known') {
           const scopeKey=`project:${p.id}`,effectiveAt=new Date('2026-08-01T00:00:00Z')
           if(!await tx.costPolicy.findUnique({where:{scopeKey_effectiveAt:{scopeKey,effectiveAt}}})) {
-            await tx.costPolicy.create({data:{scopeKey,projectId:p.id,effectiveAt,billable:seed.slug==='itrader',markupBps:seed.slug==='itrader'?1000:0}});policies++
+            await tx.costPolicy.create({data:{scopeKey,projectId:p.id,effectiveAt,billable:seed.slug==='itrader',markupBps:seed.slug==='itrader'?1000:0,vercelDailyPence:seed.slug==='itrader'?38:0}});policies++
           }
         }
       }
