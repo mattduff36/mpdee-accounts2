@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache'
 import { requireWrite, requireAuth } from '@/lib/auth'
 import { costTransaction } from '@/lib/costs/service'
 import { matrixSchema, mappedProject, policyData, rangeInput, rangesOverlap, parseUtcDate, coversDate } from '@/lib/costs/project-matrix'
-import { membershipDates, planMembershipRewrite } from '@/lib/costs/membership-lines'
+import { coveringDailyRate, membershipDates, planMembershipRewrite, type DailyRate } from '@/lib/costs/membership-lines'
 import { Prisma } from '@prisma/client'
 import { discoveredVercelProjects } from '@/lib/costs/project-inventory'
 export type SaveResult = { ok: boolean; message: string }
@@ -90,18 +90,9 @@ export async function savePolicyRange(raw: unknown): Promise<SaveResult> {
       const targets = projectId ? [{ id: projectId, dates }] : await clientMembershipTargets(tx, clientId!, dates)
       let updated = 0, added = 0
       for (const target of targets) {
-        const rows = await tx.costLegacyCharge.findMany({ where: { projectId: target.id, sourceBucket: { startsWith: 'vercel:membership:' } }, select: { id: true, sourceBucket: true, periodStart: true, periodEnd: true, frozenGbpPence: true, sourceRevision: true, sourceEvidence: true } })
-        const plan = planMembershipRewrite(rows, target.dates, saved.vercelDailyPence)
-        for (const change of plan.updates) {
-          const existing = rows.find(row => row.id === change.id)
-          await tx.costLegacyCharge.update({ where: { id: change.id }, data: { frozenGbpPence: change.frozenGbpPence, sourceRevision: change.sourceRevision, sourceChecksum: change.sourceChecksum, sourceEvidence: membershipEvidence(existing?.sourceEvidence, saved.id, saved.vercelDailyPence) } })
-          updated++
-        }
-        for (const change of plan.inserts) {
-          const day = change.sourceBucket.slice(-10)
-          await tx.costLegacyCharge.create({ data: { id: `membership_${target.id}_${day}`, projectId: target.id, sourceSystem: 'mpdee-accounts', sourceDatabaseFingerprint: `project-rate:${target.id}`, sourceKind: 'MANUAL', sourceBucket: change.sourceBucket, sourceRevision: 1, sourceChecksum: change.sourceChecksum, category: 'VERCEL_HOSTING', periodStart: change.periodStart, periodEnd: change.periodEnd, label: 'Vercel Pro membership share', frozenGbpPence: change.frozenGbpPence, invoiceability: 'INVOICEABLE', sourceEvidence: { origin: 'project-rate', policyId: saved.id, dailyPence: saved.vercelDailyPence } satisfies Prisma.InputJsonObject } })
-          added++
-        }
+        const written = await writeMembershipDays(tx, target.id, target.dates, saved.vercelDailyPence, saved.id)
+        updated += written.updated
+        added += written.added
       }
       await tx.auditLog.create({ data: { userId: actor.id, action: id ? 'costs.policy.update' : 'costs.policy.create', entityType: 'CostPolicy', entityId: saved.id, details: JSON.stringify({ scopeKey, from: data.effectiveAt.toISOString().slice(0, 10), until: data.effectiveUntil?.toISOString().slice(0, 10) ?? null, vercelDailyPence: data.vercelDailyPence, updated, added }) } })
       return { from: data.effectiveAt.toISOString().slice(0, 10), updated, added }
@@ -114,9 +105,84 @@ export async function savePolicyRange(raw: unknown): Promise<SaveResult> {
     return { ok: false, message: safe ? message : 'Nothing was saved. Check the dates and amounts, or reload and try again.' }
   }
 }
-function membershipEvidence(existing: Prisma.JsonValue | undefined, policyId: string, dailyPence: number): Prisma.InputJsonObject {
+export async function deletePolicyRange(raw: unknown): Promise<SaveResult> {
+  await requireWrite()
+  const actor = await requireAuth()
+  const input = raw && typeof raw === 'object' ? raw as { id?: unknown; projectId?: unknown; clientId?: unknown } : {}
+  const id = typeof input.id === 'string' ? input.id : ''
+  const projectId = typeof input.projectId === 'string' ? input.projectId : null
+  const clientId = typeof input.clientId === 'string' ? input.clientId : null
+  if (!id || Boolean(projectId) === Boolean(clientId)) return { ok: false, message: 'Choose a project or client, then try again.' }
+  try {
+    const result = await costTransaction(async tx => {
+      const peers = await tx.costPolicy.findMany({ where: projectId ? { projectId } : { clientId: clientId! } })
+      const target = peers.find(policy => policy.id === id)
+      if (!target) throw new Error('Choose a rate that still exists, then try again.')
+      const today = new Date().toISOString().slice(0, 10)
+      const dates = membershipDates(target, peers, today)
+      await tx.costPolicy.delete({ where: { id } })
+      const remaining = peers.filter(policy => policy.id !== id)
+      let updated = 0
+      if (projectId) {
+        const project = await tx.costProject.findUnique({ where: { id: projectId }, select: { clientId: true } })
+        const clientPolicies = project?.clientId ? await tx.costPolicy.findMany({ where: { clientId: project.clientId, projectId: null } }) : []
+        updated = (await writeReplacementDays(tx, projectId, dates, remaining, clientPolicies)).updated
+      } else {
+        const projects = await tx.costProject.findMany({ where: { clientId: clientId!, archived: false }, select: { id: true } })
+        const projectPolicies = projects.length ? await tx.costPolicy.findMany({ where: { projectId: { in: projects.map(project => project.id) } } }) : []
+        for (const project of projects) {
+          const own = projectPolicies.filter(policy => policy.projectId === project.id)
+          const openDates = dates.filter(day => !own.some(policy => coversDate(policy, own, parseUtcDate(day))))
+          updated += (await writeReplacementDays(tx, project.id, openDates, [], remaining)).updated
+        }
+      }
+      await tx.auditLog.create({ data: { userId: actor.id, action: 'costs.policy.delete', entityType: 'CostPolicy', entityId: id, details: JSON.stringify({ scopeKey: projectId ? `project:${projectId}` : `client:${clientId}`, from: target.effectiveAt.toISOString().slice(0, 10), until: target.effectiveUntil?.toISOString().slice(0, 10) ?? null, vercelDailyPence: target.vercelDailyPence, updated }) } })
+      return { from: target.effectiveAt.toISOString().slice(0, 10), updated }
+    })
+    revalidatePath('/costs', 'layout')
+    return { ok: true, message: `Deleted the rate from ${result.from}. Updated ${result.updated} Vercel membership days to the rate that remains, or to £0.00 where no rate covers the day. Estimates use the remaining dates; issued invoices are unchanged.` }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    return { ok: false, message: message.startsWith('Choose') ? message : 'Nothing was deleted. Reload the rates and try again.' }
+  }
+}
+function membershipEvidence(existing: Prisma.JsonValue | undefined, policyId: string | null, dailyPence: number): Prisma.InputJsonObject {
   const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}
   return { ...base, rateRevision: { policyId, dailyPence } }
+}
+async function writeMembershipDays(tx: Prisma.TransactionClient, projectId: string, dates: string[], pence: number, policyId: string | null) {
+  if (!dates.length) return { updated: 0, added: 0 }
+  const rows = await tx.costLegacyCharge.findMany({ where: { projectId, sourceBucket: { startsWith: 'vercel:membership:' } }, select: { id: true, sourceBucket: true, periodStart: true, periodEnd: true, frozenGbpPence: true, sourceRevision: true, sourceEvidence: true } })
+  const plan = planMembershipRewrite(rows, dates, pence)
+  let updated = 0, added = 0
+  for (const change of plan.updates) {
+    const existing = rows.find(row => row.id === change.id)
+    await tx.costLegacyCharge.update({ where: { id: change.id }, data: { frozenGbpPence: change.frozenGbpPence, sourceRevision: change.sourceRevision, sourceChecksum: change.sourceChecksum, sourceEvidence: membershipEvidence(existing?.sourceEvidence, policyId, pence) } })
+    updated++
+  }
+  for (const change of plan.inserts) {
+    const day = change.sourceBucket.slice(-10)
+    await tx.costLegacyCharge.create({ data: { id: `membership_${projectId}_${day}`, projectId, sourceSystem: 'mpdee-accounts', sourceDatabaseFingerprint: `project-rate:${projectId}`, sourceKind: 'MANUAL', sourceBucket: change.sourceBucket, sourceRevision: 1, sourceChecksum: change.sourceChecksum, category: 'VERCEL_HOSTING', periodStart: change.periodStart, periodEnd: change.periodEnd, label: 'Vercel Pro membership share', frozenGbpPence: change.frozenGbpPence, invoiceability: 'INVOICEABLE', sourceEvidence: { origin: 'project-rate', policyId, dailyPence: pence } satisfies Prisma.InputJsonObject } })
+    added++
+  }
+  return { updated, added }
+}
+async function writeReplacementDays(tx: Prisma.TransactionClient, projectId: string, dates: string[], projectPolicies: (DailyRate & { id: string })[], clientPolicies: (DailyRate & { id: string })[]) {
+  const groups = new Map<string, { policyId: string | null; pence: number; dates: string[] }>()
+  for (const date of dates) {
+    const rate = coveringDailyRate(projectPolicies, parseUtcDate(date)) ?? coveringDailyRate(clientPolicies, parseUtcDate(date))
+    const key = rate ? rate.id : 'none'
+    const group = groups.get(key) ?? { policyId: rate?.id ?? null, pence: rate?.vercelDailyPence ?? 0, dates: [] }
+    group.dates.push(date)
+    groups.set(key, group)
+  }
+  let updated = 0, added = 0
+  for (const group of Array.from(groups.values())) {
+    const written = await writeMembershipDays(tx, projectId, group.dates, group.pence, group.policyId)
+    updated += written.updated
+    added += written.added
+  }
+  return { updated, added }
 }
 async function clientMembershipTargets(tx: Prisma.TransactionClient, clientId: string, dates: string[]) {
   const projects = await tx.costProject.findMany({ where: { clientId, archived: false }, select: { id: true } })

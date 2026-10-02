@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { coverageEnd, nextUtcDate, parseUtcDate, type RateRange } from './project-matrix'
+import { coverageEnd, coversDate, nextUtcDate, parseUtcDate, type RateRange } from './project-matrix'
 
 export type MembershipSource = {
   id: string
@@ -37,6 +37,16 @@ export function membershipDates(range: RateRange, peers: RateRange[], today: str
   const dates: string[] = []
   for (let day = start; day <= last; day = nextUtcDate(day)) dates.push(day)
   return dates
+}
+export type DailyRate = RateRange & { vercelDailyPence: number }
+/** The latest same-scope rate that still covers a day, after a deleted rate has been removed. */
+export function coveringDailyRate<T extends DailyRate>(policies: T[], date: Date): T | null {
+  return policies.filter(policy => coversDate(policy, policies, date)).sort((a, b) => b.effectiveAt.getTime() - a.effectiveAt.getTime())[0] ?? null
+}
+/** Project rate first, then the client rate, otherwise no daily charge. */
+export function dailyPenceAfterRemoval(date: string, projectPolicies: DailyRate[], clientPolicies: DailyRate[]) {
+  const day = parseUtcDate(date)
+  return coveringDailyRate(projectPolicies, day)?.vercelDailyPence ?? coveringDailyRate(clientPolicies, day)?.vercelDailyPence ?? 0
 }
 export function planMembershipRewrite(existing: MembershipSource[], dates: string[], pence: number) {
   const byDate = new Map(existing.flatMap(row => { const date = bucketDate(row.sourceBucket); return date ? [[date, row] as const] : [] }))

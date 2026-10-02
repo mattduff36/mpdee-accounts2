@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { londonDayPeriod, membershipDates, planMembershipRewrite } from './membership-lines'
+import { coveringDailyRate, dailyPenceAfterRemoval, londonDayPeriod, membershipDates, planMembershipRewrite } from './membership-lines'
 import { parseUtcDate } from './project-matrix'
 
 test('London membership days use the exclusive midnight already stored for August', () => {
@@ -31,4 +31,17 @@ test('rewrites membership amounts and adds missing days without touching other r
   assert.equal(added.inserts[0].periodStart.toISOString(), '2026-08-14T23:00:00.000Z')
   assert.equal(added.inserts[0].frozenGbpPence, 50)
   assert.equal(planMembershipRewrite(existing, ['2026-08-14'], 38).updates.length, 0)
+  const cleared = planMembershipRewrite(existing, ['2026-08-14', '2026-08-16'], 0)
+  assert.equal(cleared.updates.length, 1)
+  assert.equal(cleared.updates[0].frozenGbpPence, 0)
+  assert.deepEqual(cleared.inserts, [])
+})
+test('deleting a rate leaves the daily amount of the rate that still covers the day', () => {
+  const earlier = { effectiveAt: parseUtcDate('2026-08-01'), effectiveUntil: null, vercelDailyPence: 20 }
+  const removed = { effectiveAt: parseUtcDate('2026-09-01'), effectiveUntil: parseUtcDate('2026-09-10'), vercelDailyPence: 38 }
+  const client = [{ effectiveAt: parseUtcDate('2026-01-01'), effectiveUntil: null, vercelDailyPence: 10 }]
+  assert.equal(coveringDailyRate([earlier, removed], parseUtcDate('2026-09-05'))?.vercelDailyPence, 38)
+  assert.equal(dailyPenceAfterRemoval('2026-09-05', [earlier], client), 20)
+  assert.equal(dailyPenceAfterRemoval('2026-09-05', [{ ...earlier, effectiveUntil: parseUtcDate('2026-08-31') }], client), 10)
+  assert.equal(dailyPenceAfterRemoval('2026-09-05', [], []), 0)
 })

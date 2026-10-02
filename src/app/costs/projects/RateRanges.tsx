@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { savePolicyRange, type SaveResult } from './actions'
+import { deletePolicyRange, savePolicyRange, type SaveResult } from './actions'
 import { buttonClass, inputClass } from '../ui'
 import { coverageEnd, parseUtcDate, type RateRange } from '@/lib/costs/project-matrix'
 
@@ -23,6 +23,7 @@ export function RateRanges({ name, projectId, clientId, policies, onClose }: { n
   const [message, setMessage] = useState<SaveResult | null>(null)
   const [selected, setSelected] = useState<string | null | undefined>(undefined)
   const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState<RatePolicy | null>(null)
   const today = new Date().toISOString().slice(0, 10)
   const [draft, setDraft] = useState<Draft>(() => draftFrom(policies[0], today))
   useEffect(() => { const node = dialog.current; if (node && !node.open) node.showModal() }, [])
@@ -38,6 +39,12 @@ export function RateRanges({ name, projectId, clientId, policies, onClose }: { n
   const save = () => startTransition(async () => {
     const result = await savePolicyRange({ id: selected ?? null, projectId, clientId, ...draft, effectiveUntil: draft.effectiveUntil || null })
     setMessage(result)
+    if (result.ok) { setSelected(undefined); setEditing(false); setConfirming(null); router.refresh() }
+  })
+  const remove = (policy: RatePolicy) => startTransition(async () => {
+    const result = await deletePolicyRange({ id: policy.id, projectId, clientId })
+    setMessage(result)
+    setConfirming(null)
     if (result.ok) { setSelected(undefined); setEditing(false); router.refresh() }
   })
   const preview = selected === undefined ? null : { id: selected ?? 'draft', projectId, clientId, effectiveAt: draft.effectiveAt, effectiveUntil: draft.effectiveUntil || null, billable: draft.billable, includedBaseBps: 0, markupBps: 0, infrastructureMarkupBps: 0, vercelDailyPence: 0 }
@@ -49,8 +56,9 @@ export function RateRanges({ name, projectId, clientId, policies, onClose }: { n
         <button type="button" className="text-sm text-slate-600 underline" onClick={() => dialog.current?.close()}>Close</button>
       </div>
       {message && <p role={message.ok ? 'status' : 'alert'} className={`mt-4 rounded-xl border p-3 text-sm ${message.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>{message.message}</p>}
+      {confirming && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-950"><p>Delete the rate from {confirming.effectiveAt} to {rangeEnd(confirming, policies) ?? 'ongoing'}? Those dates follow the rate that remains. The daily Vercel amount follows that rate, or becomes £0.00 when no rate covers the day. Issued invoices stay unchanged.</p><div className="mt-3 flex flex-wrap gap-3"><button type="button" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50" disabled={pending} onClick={() => remove(confirming)}>{pending ? 'Deleting…' : 'Delete rate'}</button><button type="button" className="text-sm text-slate-700 underline" onClick={() => setConfirming(null)}>Cancel</button></div></div>}
       {selected === undefined ? <div className="mt-4">
-        <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs uppercase tracking-wide text-slate-500"><tr>{['From', 'To', 'Daily Vercel', ''].map(heading => <th key={heading} className="p-2">{heading}</th>)}</tr></thead><tbody>{ordered.map(policy => <tr key={policy.id} className="border-t"><td className="p-2">{policy.effectiveAt}</td><td className="p-2">{rangeEnd(policy, policies) ?? 'Ongoing'}</td><td className="p-2">£{pounds(policy.vercelDailyPence)}</td><td className="p-2 text-right"><button type="button" className="mr-3 text-sm font-semibold text-blue-700 underline" onClick={() => openForm(policy, false)}>View</button><button type="button" className="text-sm font-semibold text-blue-700 underline" onClick={() => openForm(policy, true)}>Edit</button></td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs uppercase tracking-wide text-slate-500"><tr>{['From', 'To', 'Daily Vercel', ''].map(heading => <th key={heading} className="p-2">{heading}</th>)}</tr></thead><tbody>{ordered.map(policy => <tr key={policy.id} className="border-t"><td className="p-2">{policy.effectiveAt}</td><td className="p-2">{rangeEnd(policy, policies) ?? 'Ongoing'}</td><td className="p-2">£{pounds(policy.vercelDailyPence)}</td><td className="p-2 text-right"><div className="flex flex-col items-end gap-1"><button type="button" className="text-sm font-semibold text-blue-700 underline" onClick={() => openForm(policy, false)}>View</button><button type="button" className="text-sm font-semibold text-blue-700 underline" onClick={() => openForm(policy, true)}>Edit</button><button type="button" className="text-sm font-semibold text-red-700 underline" onClick={() => { setConfirming(policy); setMessage(null) }}>Delete</button></div></td></tr>)}</tbody></table></div>
         {!policies.length && <p className="text-sm text-slate-500">No rates yet.</p>}
         <button type="button" className={`${buttonClass} mt-4`} onClick={() => openForm(undefined, true)}>Add a rate</button>
       </div> : <>
@@ -63,7 +71,7 @@ export function RateRanges({ name, projectId, clientId, policies, onClose }: { n
           <label className="text-sm">Daily Vercel amount (£)<input aria-label="Daily Vercel amount" className={inputClass} inputMode="decimal" required value={draft.vercelDaily} onChange={event => setDraft({ ...draft, vercelDaily: event.target.value })} /></label>
           <p className="sm:col-span-2 text-xs text-slate-500">Saving replaces this {projectId ? 'project' : 'client'}’s Vercel Pro membership share for each day in the range, through today. Build CPU and other Vercel rows stay unchanged. Issued invoices stay unchanged.</p>
         </fieldset>
-        <div className="mt-4 flex flex-wrap gap-3">{editing && <button className={buttonClass} disabled={pending}>{pending ? 'Saving…' : 'Save rate'}</button>}<button type="button" className="text-sm text-slate-600 underline" onClick={() => { setSelected(undefined); setEditing(false); setMessage(null) }}>Back to rates</button>{!editing && <button type="button" className={buttonClass} onClick={() => setEditing(true)}>Edit this rate</button>}</div>
+        <div className="mt-4 flex flex-wrap gap-3">{editing && <button className={buttonClass} disabled={pending}>{pending ? 'Saving…' : 'Save rate'}</button>}<button type="button" className="text-sm text-slate-600 underline" onClick={() => { setSelected(undefined); setEditing(false); setMessage(null) }}>Back to rates</button>{!editing && <button type="button" className={buttonClass} onClick={() => setEditing(true)}>Edit this rate</button>}{selected && <button type="button" className="text-sm font-semibold text-red-700 underline" onClick={() => { const policy = policies.find(item => item.id === selected); if (policy) { setConfirming(policy); setMessage(null) } }}>Delete this rate</button>}</div>
       </>}
     </form>
   </dialog>
