@@ -128,6 +128,7 @@ model Invoice {
   costAssociation InvoiceCostAssociation?
   payments      Payment[]
   creditNotes   CreditNote[]
+  chargeSnapshots CostChargeSnapshot[]
   emailLogs     EmailLog[]
   auditLogs     AuditLog[]
 
@@ -172,6 +173,7 @@ model Payment {
   isRefund  Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  chargeSnapshots CostChargeSnapshot[]
 
   @@index([invoiceId])
   @@index([clientId])
@@ -211,6 +213,10 @@ model Expense {
   invoiceId         String?
   notes             String?
   isArchived        Boolean         @default(false)
+  providerAccountRef String?
+  serviceName       String?
+  billingPeriodStart DateTime?      @db.Date
+  billingPeriodEnd   DateTime?      @db.Date
   costAllocations CostExpenseAllocation[]
   bankTransactionId String?
   createdAt         DateTime        @default(now())
@@ -453,6 +459,7 @@ model CostProject {
   policies  CostPolicy[]
   events    CostUsageEvent[]
   legacyCharges CostLegacyCharge[]
+  chargeSnapshots CostChargeSnapshot[]
 }
 
 // Reviewed, frozen legacy client balances. Never provider cash or accounting expenses.
@@ -478,6 +485,38 @@ model CostLegacyCharge {
 
   @@unique([sourceSystem, sourceDatabaseFingerprint, sourceKind, sourceBucket], map: "CostLegacyCharge_source_identity_key")
   @@index([projectId, periodStart, periodEnd])
+}
+
+// Approved client-charge freeze. Append a new row to correct one; do not update a row in place.
+model CostChargeSnapshot {
+  id                 String   @id
+  projectId          String
+  project            CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  policyVersion      String
+  allocationMethod   String?
+  sourceRevisionIds  Json
+  currency           String
+  fxSource           String?
+  fxDate             DateTime? @db.Date
+  fxRate             Decimal?  @db.Decimal(20, 8)
+  usageValueUnits    BigInt?
+  providerCostUnits  BigInt?
+  clientChargePence  Int
+  outstandingPence   Int?
+  verificationStatus String
+  invoiceId          String?
+  invoice            Invoice? @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  paymentId          String?
+  payment            Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  replacesSnapshotId String?
+  replaces           CostChargeSnapshot? @relation("ChargeAdjustment", fields: [replacesSnapshotId], references: [id], onDelete: Restrict)
+  adjustments        CostChargeSnapshot[] @relation("ChargeAdjustment")
+  evidence           Json
+  createdAt          DateTime @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([invoiceId])
+  @@index([paymentId])
 }
 
 model CostProjectMapping {
@@ -624,4 +663,50 @@ model CostUsageEvidence {
   @@unique([accountEmail, fingerprint])
   @@index([accountEmail, occurredAt])
   @@index([linkedEventId])
+}
+
+// Review notes for open cost questions. Changing status does not change usage, bills, or approved charges.
+model CostReconciliationIssue {
+  id              String   @id
+  stableKey       String   @unique
+  projectSlug     String?
+  provider        String?
+  accountRef      String?
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  title           String
+  description     String
+  evidenceRef     String
+  amountText      String?
+  currency        String?
+  amountUnknown   Boolean  @default(false)
+  effectOnTotals  String
+  billingEffect   String
+  requiredAction  String
+  status          String   @default("open")
+  resolutionNote  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  events          CostReconciliationEvent[]
+}
+
+model CostReconciliationEvent {
+  id         String   @id @default(cuid())
+  issueId    String
+  issue      CostReconciliationIssue @relation(fields: [issueId], references: [id], onDelete: Restrict)
+  action     String
+  note       String
+  actorEmail String?
+  createdAt  DateTime @default(now())
+
+  @@index([issueId, createdAt])
+}
+
+model CostRefreshStatus {
+  id               String   @id
+  finishedAt       DateTime
+  sourceNote       String
+  added            Int
+  duplicate        Int
+  unavailableNote  String
 }

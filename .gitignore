@@ -15,6 +15,15 @@
 *.tsbuildinfo
 
 # Cost collector exports are private account metadata, never source files.
+/data/costs/
 /costs-outbox/
 /costs-exports/
 *.costs-private.json
+/docs/costs/live-shadow-evidence/
+/docs/costs/live-shadow-*
+/docs/costs/cursor-handover.md
+/docs/costs/local-run.md
+/scripts/costs/local-browser.mjs
+/scripts/costs/stage3-browser.mjs
+/scripts/costs/stage3-mobile.mjs
+/scripts/costs/stage3-page-text.mjs

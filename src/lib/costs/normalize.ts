@@ -9,7 +9,7 @@ const eventSchema = z.object({
   kind: z.string().max(100).nullable().optional(), isTokenBasedCall: z.boolean().nullable().optional(),
   chargedCents: amount, usageBasedCosts: z.string().max(50).nullable().optional(), cursorTokenFee: amount,
   tokenUsage: z.object({ inputTokens: token, outputTokens: token, cacheReadTokens: token, cacheWriteTokens: token, totalCents: amount }).nullable().optional(),
-  sourceId: z.string().min(1).max(200).optional(), resourceRef: z.string().max(250).nullable().optional(),
+  sourceId: z.string().min(1).max(1000).optional(), resourceRef: z.string().max(250).nullable().optional(),
   nominalAmount: amount, billedAmount: amount, currency: z.enum(['USD','GBP','EUR']).optional(),
   description: z.string().max(300).optional(),
   taskContext: z.object({ method: z.literal('local-topic-rules-v1'), topics: z.array(z.enum(['Interface and usability','Costs and accounting','Database work','Authentication and access','Deployment and infrastructure','Testing and debugging','Scheduling and resources'])).max(3) }).strict().optional(),
@@ -24,6 +24,14 @@ export const importSchema = z.object({
 export type ImportPayload = z.infer<typeof importSchema>
 export type Normalized = ReturnType<typeof normalize>[number]
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+
+/** Stable Cursor identity before the within-batch occurrence suffix. */
+export function cursorBaseKey(event: { timestamp: string | number; model?: string | null; conversationId?: string | null; isTokenBasedCall?: boolean | null }) {
+  const rawTime = String(event.timestamp)
+  const date = new Date(/^\d{13}$/.test(rawTime) ? Number(rawTime) : rawTime)
+  if (!Number.isFinite(date.getTime())) throw new Error('Invalid event date')
+  return hash([date.toISOString(), event.model ?? '', event.conversationId ?? '', event.isTokenBasedCall ?? ''].join('|'))
+}
 // Exact provider labels for subscription-covered usage; never infer from plan spend.
 const INCLUDED_CURSOR_KINDS = new Set(['USAGE_EVENT_KIND_INCLUDED_IN_ULTRA', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS'])
 export function normalize(input: ImportPayload) {
@@ -34,9 +42,7 @@ export function normalize(input: ImportPayload) {
     const date = new Date(/^\d{13}$/.test(rawTime) ? Number(rawTime) : rawTime)
     if (!Number.isFinite(date.getTime())) throw new Error('Invalid event date')
     const occurredAt = date.toISOString()
-    const baseKey = input.provider === 'cursor'
-      ? hash([occurredAt, event.model ?? '', event.conversationId ?? '', event.isTokenBasedCall ?? ''].join('|'))
-      : event.sourceId
+    const baseKey = input.provider === 'cursor' ? cursorBaseKey(event) : event.sourceId
     if (!baseKey) throw new Error('Infrastructure imports require a stable sourceId (invoice line or provider bucket ID)')
     counts.set(baseKey, (counts.get(baseKey) ?? 0) + 1)
     return { event, occurredAt, baseKey }

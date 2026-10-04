@@ -5,9 +5,10 @@ export const PROJECT_READ_TOKEN_MAP_ENV = 'COSTS_PROJECT_READ_TOKEN_SHA256_BY_SL
 type TokenDigests = Record<string, string>
 
 function parseDigestMap(value: string | undefined): TokenDigests {
-  if (!value) throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} is not configured`)
+  const trimmed = value?.trim()
+  if (!trimmed) throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} is not configured`)
   let parsed: unknown
-  try { parsed = JSON.parse(value) } catch { throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} must be a JSON object`) }
+  try { parsed = JSON.parse(trimmed) } catch { throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} must be a JSON object`) }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} must be a JSON object`)
   const entries = Object.entries(parsed as Record<string, unknown>)
   if (!entries.length) throw new Error(`${PROJECT_READ_TOKEN_MAP_ENV} must contain at least one project`)

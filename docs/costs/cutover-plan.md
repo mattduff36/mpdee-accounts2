@@ -4,7 +4,7 @@
 
 Move the authoritative cost ledger from iTrader to MPDEE Accounts only after the source history, billing imports, project attribution and invoice basis reconcile. Keep the cutover one-way: Accounts becomes the sole writer, while iTrader consumes a project-scoped read-only Accounts API. Until the gates below pass, iTrader remains authoritative and both applications must not issue charges for the same costs.
 
-This is an implementation plan. The project-scoped read API is implemented and verified on preview (see `project-read-api.md`). The iTrader reader cutover, historical import and charge approval snapshots are **not implemented**.
+This is an implementation plan. The project-scoped read API is implemented and verified on preview (see `project-read-api.md`). A local shadow comparison, infrastructure import planner and append-only `CostChargeSnapshot` model now exist. The production migration, historical import and iTrader writer cutover are not approved and must not be run from this change.
 
 ## Verified current state
 
@@ -47,6 +47,27 @@ Before Accounts can issue invoices, create immutable approval snapshots for each
 - Switch the iTrader reader to the project-scoped Accounts read API. Confirm production iTrader has no ledger write path or write credentials after the switch.
 - Enable Accounts as the sole writer only after read-path checks and reconciliation pass. Monitor first provider imports and compare rendered per-project totals and held records against the signed-off cutover report.
 - Keep a rollback record of the cutover boundary and final source export. Rollback must not reactivate two writers; any return to iTrader requires stopping Accounts writes and transferring a new final delta first.
+
+## Shadow comparison before any cutover
+
+Do not run this sequence until the owner approves it. The shadow comparison is local and read-only. It does not deploy, apply `20261004010000_cost_charge_snapshots` to production, edit live `CostPolicy` rows, send notifications, or switch writers.
+
+1. Use the same cutoff `2026-08-13T23:00:00.000Z`, the same provider accounts, and the `itrader` project scope. Export Accounts `mpdee-project-cost-comparison-v1` and the iTrader ledger view. Compare source-currency units before FX. Record code defaults, the known-project seed (`markupBps` 1000 and £0.38/day), and the stored policies that were actually read.
+2. Explain every material difference as a missing event, duplicate, attribution, funding, policy, FX, rounding, infrastructure coverage, adjustment, or settlement. Do not change either total to force agreement. Unresolved rows stay visible and non-invoiceable.
+3. Classify supplied source rows before importing them. A customer payment stays a payment with its settlement link. An unrelated-work credit stays a client-charge credit. A client-charge adjustment stays an adjustment. None of those are provider expenses. A one-hour offset from `2026-08-13T23:00:00.000Z`, including a naive local time read as UTC, is reported and the stored exclusive period end is left unchanged.
+4. Prepare the final infrastructure and manual-adjustment delta with stable `(provider, accountRef, sourceKey)` identities. Reject Vercel-billed database rows that would also arrive as Supabase. Exclude frozen baseline ids and `vercel:membership:` rows from that delta. Replay must add zero rows.
+
+### Final-delta import
+
+Stop iTrader writes only after the shadow report is accepted. Export the last source window, import it once through Accounts, and replay the same payload. Counts, source units, revisions, pending requests, confirmed settlements, and approved `CostChargeSnapshot` ids must match the signed report. Frozen invoice amounts stay on their original rows.
+
+### Single-writer switch
+
+The iTrader preview reader already requests this comparison and keeps unapproved lines provisional. Removing iTrader's provider write path and write credentials is a separate production change. Accounts becomes the only writer after that change and the reconciliation both pass. Until that approval, both apps must not issue charges for the same cost.
+
+### Rollback
+
+Stop the new writer before restoring the previous one. Import any Accounts-only delta back as a reviewed iTrader adjustment, then resume iTrader writes. Do not run both writers. Rollback does not delete approved snapshots, settlements, or frozen charges.
 
 ## Cutover acceptance gates
 

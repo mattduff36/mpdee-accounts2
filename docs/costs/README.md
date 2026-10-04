@@ -86,6 +86,16 @@ Run `scripts/costs/install-task.ps1` locally to install an hourly/logon collecti
 
 See `project-read-api.md` for the implemented, locally verified project-scoped read API; hosted activation and the iTrader reader switch remain pending.
 
+## Shadow comparison
+
+`GET /api/costs/projects/{slug}/comparison` returns `mpdee-project-cost-comparison-v1` for events on or after `2026-08-13T23:00:00.000Z`. It is a read-only shadow. iTrader remains the authoritative writer, and `authoritativeWriter` is `itrader`.
+
+The comparison policy `mpdee-comparison-policy-v1` prices included Cursor at 50% of nominal value, on-demand at 100% of provider cash, and infrastructure at face value. The fixed £0.38/day Vercel allocation is off. This policy is not written into `CostPolicy`. Code defaults still have `markupBps` 0, while known-project setup can still seed iTrader with `markupBps` 1000 and `vercelDailyPence` 38 when that row is absent. The response records which of those layers were read. An unread database is reported as unread; it is not treated as the comparison policy.
+
+Usage value, provider cost, client charge and outstanding balance are separate. Included events with zero provider cash stay visible and are not treated as a free subscription. Subscription invoices use `mpdee-subscription-allocation-v1`: included nominal value is the weight, on-demand cash is not, unassigned usage stays in the denominator, and unallocated overhead is named. A provider invoice and its underlying usage are not both expenses. Customer payments, customer credits, VAT and prepaid balances stay in `documents`. Outstanding uses approved charge snapshots only.
+
+`CostChargeSnapshot` rows are append-only approved freezes linked to existing `Invoice` and `Payment` rows. The migration `20261004010000_cost_charge_snapshots` is in the repository and must not be applied to production until cutover is approved. Frozen `CostLegacyCharge` rows remain client charges, not provider expenses. Infrastructure planning rejects a second import of a database resource already billed through Vercel and excludes `vercel:membership:` rows under the comparison policy.
+
 ## Experience and analysis update
 
 The approved experience update is tracked in experience-improvements.md. Costs pages share persistent navigation. Projects use a single atomic-save matrix with verified local identity suggestions and dated rate history. Review groups conversations and shows rule-based evidence scores, never statistical probabilities or automatic assignments.
