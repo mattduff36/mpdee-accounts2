@@ -1,4 +1,4 @@
-import { unresolvedCoverageText } from './bill-coverage'
+import { unresolvedBillIssueCopy } from './bill-coverage'
 import { nativeText, outstandingLabel, type CostSummary, type ProjectFigure } from './figures'
 import { unitsText } from './money'
 
@@ -33,6 +33,7 @@ export function liveIssueDrafts(summary: CostSummary): IssueDraft[] {
   const infra = summary.unassignedInfrastructure.map(nativeText).join(', ') || 'USD 0.0000000'
   const bills = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(summary.providerBillPence / 100)
   const unallocated = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(summary.unallocatedBillPence / 100)
+  const historicalBills = unresolvedBillIssueCopy(summary.unresolvedBills)
   return [
     draft({
       id: 'unassigned-infrastructure', projectSlug: null, provider: 'vercel',
@@ -66,12 +67,10 @@ export function liveIssueDrafts(summary: CostSummary): IssueDraft[] {
     }),
     draft({
       id: 'unresolved-bill-coverage', projectSlug: null, provider: 'cursor',
-      title: 'Provider bill coverage is unresolved',
-      description: summary.unresolvedBills.length
-        ? summary.unresolvedBills.map(bill => unresolvedCoverageText(bill)).join(' ')
-        : 'No provider bill is waiting on a service period.',
-      evidenceRef: 'Expense notes and book date. Production Expense has no billing-period columns.',
-      amountText: summary.unresolvedBills.length ? `£${(summary.unresolvedBills.reduce((total, bill) => total + bill.grossPence, 0) / 100).toFixed(2)}` : '£0.00',
+      title: historicalBills.title,
+      description: historicalBills.description,
+      evidenceRef: 'Expense notes and book date. A service period is still required before coverage can change.',
+      amountText: historicalBills.amountText,
       currency: 'GBP', amountUnknown: false,
       effectOnTotals: 'Omitted from the ledger bill total. Not allocated to a project.',
       billingEffect: 'Not invoiceable and not a verified exclusion.',
@@ -79,8 +78,8 @@ export function liveIssueDrafts(summary: CostSummary): IssueDraft[] {
     }),
     draft({
       id: 'free-credit', projectSlug: null, provider: 'cursor',
-      title: 'Free-credit funding is unresolved',
-      description: `${summary.freeCreditRows} events use unknown or free-credit funding. Their recorded provider amount is separate from confirmed on-demand cash.`,
+      title: 'Unknown funding and free-credit funding',
+      description: `${summary.freeCreditRows} events use unknown funding or free-credit funding. Unknown funding is not free credit. Their recorded provider amount is separate from confirmed on-demand cash.`,
       evidenceRef: 'CostUsageRevision.funding unknown or free-credit',
       amountText: collapse(summary.freeCredit).map(nativeText).join(', ') || 'USD 0.0000000', currency: 'USD', amountUnknown: false,
       effectOnTotals: 'Shown as free-credit recorded charge. Excluded from confirmed provider cash and from the provisional client charge.',

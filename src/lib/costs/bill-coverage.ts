@@ -31,6 +31,23 @@ export function sourceDateFromNotes(notes: string | null | undefined) {
   return notes?.match(/source date(?: of)? (\d{4}-\d{2}-\d{2})/)?.[1] ?? null
 }
 
+/** Compact issue copy. A long bill list stays available on the page; it is not an iTrader charge. */
+export function unresolvedBillIssueCopy(bills: { reference: string; grossPence: number; booked: string; sourceDate: string | null }[]) {
+  if (!bills.length) {
+    return {
+      title: 'Historical provider bills with unverified service periods',
+      description: 'No provider bill is waiting on a service period.',
+      amountText: 'Not an iTrader charge',
+    }
+  }
+  const highlighted = bills.filter(bill => bill.reference === 'CH4KCVQF-0040' || bills.length <= 3)
+  return {
+    title: 'Historical provider bills with unverified service periods',
+    description: `${bills.length} historical provider bills have unverified service periods. Their accounts-book gross is not an iTrader charge and is not added to the provisional comparison. A service period is still required. ${highlighted.map(bill => unresolvedCoverageText(bill)).join(' ')}`.trim(),
+    amountText: 'Not an iTrader charge',
+  }
+}
+
 export function unresolvedCoverageText(bill: { reference: string; grossPence: number; booked: string; sourceDate: string | null }) {
   const pounds = (bill.grossPence / 100).toFixed(2)
   const source = bill.sourceDate

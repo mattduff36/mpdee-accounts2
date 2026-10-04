@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import { canWrite, requireAuth } from '@/lib/auth'
 import { PageHeader } from '@/components/PageHeader'
-import { unresolvedCoverageText } from '@/lib/costs/bill-coverage'
 import { LEDGER_START } from '@/lib/costs/comparison-policy'
 import { loadCostFigures } from '@/lib/costs/figures-load'
 import { liveIssueDrafts, mergeIssue, recordedIssueDrafts } from '@/lib/costs/reconciliation'
 import { prisma } from '@/lib/db'
 import { inputClass, panel } from '../ui'
+import { HistoricalBills } from '../HistoricalBills'
 import { applyExpenseShare, reviewIssue, saveBillMetadata } from './actions'
 
 export const dynamic = 'force-dynamic'
@@ -39,7 +39,7 @@ export default async function ReconciliationIssuesPage({ searchParams }: { searc
   return <div className="space-y-6 pb-10">
     <PageHeader title="Reconciliation issues" description="Open questions stay visible. Marking an issue reviewed or resolved does not change usage, bills, payments, or approved charges." />
     <p className="max-w-3xl text-sm leading-6 text-slate-600">{refresh ? `Last refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh has been recorded. Automatic collection is not running.'}</p>
-    <p className="max-w-3xl text-sm leading-6 text-slate-800">Unresolved bill coverage: {summary.unresolvedBills.length ? summary.unresolvedBills.map(bill => unresolvedCoverageText(bill)).join(' ') : 'none.'}</p>
+    <div className="max-w-3xl"><HistoricalBills bills={summary.unresolvedBills} /></div>
     <p className="max-w-3xl text-sm text-slate-700">Infrastructure collection is manual. Latest stored infrastructure event: {infrastructureLatest}. A refresh does not read a new writer export.</p>
     <nav aria-label="Issue filters" className="flex flex-wrap gap-2 text-sm">
       {[['', 'All'], ['open', 'Open'], ['reviewed', 'Reviewed'], ['resolved', 'Resolved']].map(([value, label]) => <Link key={label} href={value ? `/costs/issues?status=${value}` : '/costs/issues'} className="rounded-full border border-slate-300 px-3 py-1">{label}</Link>)}

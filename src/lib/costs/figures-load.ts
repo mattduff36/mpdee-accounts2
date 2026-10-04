@@ -38,11 +38,15 @@ export async function loadCostFigures(): Promise<CostSummary> {
       select: { grossAmount: true, costAllocations: { select: { project: { select: { slug: true } }, amountPence: true } } },
     }),
     prisma.costUsageRevision.count({ where: { fxGbp: { not: null }, event: { occurredAt: { gte: start } } } }),
-    prisma.expense.findMany({
-      where: { isArchived: false, date: { lt: start }, billingPeriodStart: null, OR: [{ supplier: { contains: 'cursor', mode: 'insensitive' } }, { supplier: { contains: 'vercel', mode: 'insensitive' } }, { supplier: { contains: 'supabase', mode: 'insensitive' } }] },
-      select: { reference: true, grossAmount: true, date: true, notes: true },
-      orderBy: { date: 'asc' },
-    }),
+    prisma.$queryRaw<{ reference: string | null; gross_pence: number; booked: string; notes: string | null }[]>`
+      SELECT COALESCE(reference, 'No reference') AS reference, "grossAmount" AS gross_pence,
+        to_char(date, 'YYYY-MM-DD HH24:MI:SS') AS booked, notes
+      FROM "Expense"
+      WHERE "isArchived" = false
+        AND date < TIMESTAMP '2026-08-13 23:00:00'
+        AND "billingPeriodStart" IS NULL
+        AND (supplier ILIKE '%cursor%' OR supplier ILIKE '%vercel%' OR supplier ILIKE '%supabase%')
+      ORDER BY date ASC`,
   ])
   const usage: UsageGroup[] = groups.map(group => ({
     slug: group.slug, name: group.name, provider: group.provider, funding: group.funding, currency: group.currency, quality: group.quality,
@@ -74,8 +78,8 @@ export async function loadCostFigures(): Promise<CostSummary> {
     unallocatedBillPence: providerBillPence - allocatedPence,
     unresolvedBills: unresolvedExpenses.map(expense => ({
       reference: expense.reference ?? 'No reference',
-      grossPence: expense.grossAmount,
-      booked: expense.date.toISOString().slice(0, 19).replace('T', ' '),
+      grossPence: Number(expense.gross_pence),
+      booked: expense.booked,
       sourceDate: sourceDateFromNotes(expense.notes),
     })),
     usageRowsWithStoredFx: fxRows,
