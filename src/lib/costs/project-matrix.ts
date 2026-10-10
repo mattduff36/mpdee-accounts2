@@ -66,7 +66,13 @@ export function policyData(input: z.infer<typeof policy>) {
   if (effectiveUntil && effectiveUntil < effectiveAt) throw new Error('Choose an end date on or after the start date.')
   const includedBaseBps = percentBps(input.includedBase)
   if (includedBaseBps > 10000) throw new Error('Included base must not exceed 100%.')
-  return { effectiveAt, effectiveUntil, billable: input.billable, includedBaseBps, markupBps: percentBps(input.markup), infrastructureMarkupBps: percentBps(input.infrastructureMarkup), vercelDailyPence: penceFromPounds(input.vercelDaily ?? '0') }
+  const markupBps = percentBps(input.markup)
+  const infrastructureMarkupBps = percentBps(input.infrastructureMarkup)
+  const vercelDailyPence = penceFromPounds(input.vercelDaily ?? '0')
+  if (includedBaseBps !== 5000 || markupBps !== 0 || infrastructureMarkupBps !== 0 || vercelDailyPence !== 0) {
+    throw new Error('Choose included base 50%, zero markups and no daily membership. Other percentage or daily values are not accepted.')
+  }
+  return { effectiveAt, effectiveUntil, billable: input.billable, includedBaseBps: 5000, markupBps: 0, infrastructureMarkupBps: 0, vercelDailyPence: 0 }
 }
 /** Exact evidence only. Existing conflicts and manual decisions are never silently cleared. */
 export function mappedProject(event: { accountRef: string; conversationId: string|null; workspaceRef: string|null; resourceRef: string|null; provider: string; projectId: string|null; attribution: string; manualAssignment: boolean }, mappings: {type:string;value:string;projectId:string}[]) {

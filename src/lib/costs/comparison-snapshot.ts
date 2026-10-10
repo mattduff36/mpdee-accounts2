@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { unitsText } from './money'
+import { CHARGE_RULE_VERSION, unitsText } from './money'
 import { quoteFor, type FxQuote } from './fx-values'
 import { ALLOCATION_METHOD, COMPARISON_POLICY_VERSION, LEDGER_START, policyInventory, type StoredPolicyRecord } from './comparison-policy'
 import { eventViews, outstandingBalance, type MoneyEvent, type SettlementDocuments } from './four-views'
@@ -92,7 +92,7 @@ export function projectComparison(input: {
     else { total.charge += views.clientCharge; total.knownCharge = true }
     if (estimate) total.fxEstimate += 1
     totals.set(currency, total)
-    const proof = { id: event.id, views, fx: fxQuote }
+    const proof = { id: event.id, model: event.model ?? null, chargeRule: CHARGE_RULE_VERSION, views, fx: fxQuote }
     return {
       id: hash([input.project, event.provider, event.accountRef, event.sourceKey]),
       revision: hash(proof),
@@ -152,5 +152,5 @@ export function projectComparison(input: {
     zeroProviderCashIncluded,
     policyInventory: policyInventory(input.storedPolicies),
   }
-  return { ...body, revision: hash({ project: input.project, lines, coverage, outstanding: body.outstanding, documents: input.documents }) }
+  return { ...body, revision: hash({ project: input.project, chargeRule: CHARGE_RULE_VERSION, lines, coverage, outstanding: body.outstanding, documents: input.documents }) }
 }

@@ -8,7 +8,7 @@ import { LEDGER_START } from './comparison-policy'
 const fx = { rate: '0.75', date: '2026-09-26', source: 'test' }
 const event = {
   id: 'event-1', provider: 'cursor', funding: 'included', nominalUnits: decimalUnits('10'), providerUnits: BigInt(0), currency: 'USD',
-  quality: 'complete', attribution: 'mapped', hold: null, coveredByProviderInvoice: false, fx,
+  quality: 'complete', attribution: 'mapped', hold: null, coveredByProviderInvoice: false, model: 'claude-4.6-sonnet', fx,
 }
 
 test('included zero provider cash is not a free subscription and is priced at 50 percent', () => {
@@ -18,6 +18,31 @@ test('included zero provider cash is not a free subscription and is priced at 50
   assert.equal(views.usageValue, decimalUnits('10'))
   assert.equal(views.clientCharge, decimalUnits('5'))
   assert.equal(views.clientChargePence, BigInt(375))
+})
+
+test('forwarded model zeroes included Grok and Composer usage without zeroing a held row', () => {
+  const grok = eventViews({ ...event, model: 'cursor-grok-4.6-xhigh-fast' })
+  assert.equal(grok.clientCharge, BigInt(0))
+  assert.equal(grok.clientChargePence, BigInt(0))
+  assert.equal(grok.usageValue, decimalUnits('10'))
+  assert.equal(grok.providerCost, null)
+  assert.equal(grok.includedCashIsNotSubscription, true)
+  const composer = eventViews({ ...event, model: 'CURSOR-COMPOSER-2' })
+  assert.equal(composer.clientCharge, BigInt(0))
+  assert.equal(composer.usageValue, decimalUnits('10'))
+  const onDemand = eventViews({ ...event, model: 'grok-4', funding: 'on-demand', providerUnits: decimalUnits('4') })
+  assert.equal(onDemand.providerCost, decimalUnits('4'))
+  assert.equal(onDemand.clientCharge, decimalUnits('4'))
+  const missing = eventViews({ ...event, model: '  ' })
+  assert.equal(missing.clientCharge, null)
+  assert.equal(missing.usageValue, decimalUnits('10'))
+  assert.equal(missing.providerCost, null)
+  assert.equal(missing.reason, 'Client charge is unavailable: model or monetary basis needs review')
+  const held = eventViews({ ...event, model: 'grok-4', hold: 'Needs review' })
+  assert.equal(held.clientCharge, null)
+  assert.equal(held.clientChargePence, null)
+  assert.equal(held.reason, 'Needs review')
+  assert.equal(held.usageValue, decimalUnits('10'))
 })
 
 test('on-demand client charge is the provider cash without the stored 10 point addition', () => {

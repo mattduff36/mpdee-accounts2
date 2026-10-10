@@ -11,6 +11,7 @@ function event(patch: Partial<EstimateEvent> & Pick<EstimateEvent, 'sourceKey'>)
   return {
     provider: 'cursor', accountRef: 'acct', occurredAt: '2026-09-01T12:00:00.000Z', revision: 1, funding: 'included',
     nominalUnits: decimalUnits('10'), providerUnits: BigInt(0), currency: 'USD', quality: 'complete', attribution: 'mapped',
+    model: 'claude-4.6-sonnet',
     ...patch,
   }
 }
@@ -21,8 +22,8 @@ test('comparison prices included at 50 percent, on-demand at face value, and ign
     referenceQuotes: [fx],
     storedPolicies: [{
       scope: 'project', effectiveAt: '2026-08-01T00:00:00.000Z', effectiveUntil: null, billable: true,
-      includedBaseBps: ITRADER_KNOWN_PROJECT_SEED.includedBaseBps, markupBps: ITRADER_KNOWN_PROJECT_SEED.markupBps,
-      infrastructureMarkupBps: 0, vercelDailyPence: ITRADER_KNOWN_PROJECT_SEED.vercelDailyPence,
+      includedBaseBps: 6000, markupBps: 1000,
+      infrastructureMarkupBps: 2500, vercelDailyPence: 38,
     }],
     events: [
       event({ sourceKey: 'included' }),
@@ -40,17 +41,45 @@ test('comparison prices included at 50 percent, on-demand at face value, and ign
   assert.equal(estimate.comparison.gbp.estimate, true)
   assert.equal(estimate.comparison.gbp.partial, false)
   assert.equal(estimate.storedPolicy?.dailyMembershipApplied, false)
-  assert.equal(estimate.storedPolicy?.nativeCharge.find(amount => amount.currency === 'USD')?.units, decimalUnits('6') + decimalUnits('11'))
-  assert.equal(estimate.storedPolicy?.gbp.pence, 480 + 880 + 400)
-  assert.notEqual(estimate.storedPolicy?.gbp.pence, 480 + 880 + 400 + 38)
+  assert.equal(estimate.storedPolicy?.rates[0]?.includedBaseBps, 6000)
+  assert.equal(estimate.storedPolicy?.rates[0]?.markupBps, 1000)
+  assert.equal(estimate.storedPolicy?.nativeCharge.find(amount => amount.currency === 'USD')?.units, decimalUnits('5') + decimalUnits('10'))
+  assert.equal(estimate.storedPolicy?.gbp.pence, 400 + 800 + 400)
+  assert.notEqual(estimate.storedPolicy?.gbp.pence, 400 + 800 + 400 + 38)
   assert.equal(estimate.exclusions.find(bucket => bucket.key === 'membership')?.rows, 1)
   assert.equal(COMPARISON_POLICY.markupBps, 0)
   assert.equal(COMPARISON_POLICY.vercelDailyPence, 0)
   const presented = presentProvisionalEstimate(estimate, { infrastructureRowsInDatabase: 1 })
   assert.equal(presented.title, 'Provisional iTrader comparison charge')
+  assert.match(presented.pricing.join(' '), /Included premium Cursor is 50%/)
+  assert.match(presented.pricing.join(' '), /Included Grok and Composer are 0%/)
+  assert.match(presented.pricing.join(' '), /100% of recorded provider cash/)
   assert.match(presented.pricing.join(' '), /No markup/)
-  assert.match(presented.pricing.join(' '), /No daily membership allocation/)
+  assert.match(presented.pricing.join(' '), /No daily membership/)
   assert.equal(presented.storedPolicy?.label, 'Stored policy client estimate')
+})
+
+test('included Grok is zero, Composer on-demand is cash, and an ambiguous or incomplete model basis is held', () => {
+  const estimate = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    events: [
+      event({ sourceKey: 'premium' }),
+      event({ sourceKey: 'grok', model: 'cursor-grok-4.6' }),
+      event({ sourceKey: 'composer', model: 'composer-2', funding: 'on-demand', nominalUnits: decimalUnits('9'), providerUnits: decimalUnits('2.5') }),
+      event({ sourceKey: 'auto', model: 'AUTO' }),
+      event({ sourceKey: 'blank', model: '   ' }),
+      event({ sourceKey: 'incomplete', quality: 'partial' }),
+      event({ sourceKey: 'loose', attribution: 'unassigned' }),
+    ],
+  })
+  assert.equal(estimate.included.rows, 2)
+  assert.equal(estimate.included.nativeCharge[0].units, decimalUnits('5'))
+  assert.equal(estimate.onDemand.nativeCharge[0].units, decimalUnits('2.5'))
+  assert.equal(estimate.comparison.nativeCharge[0].units, decimalUnits('5') + decimalUnits('2.5'))
+  assert.equal(estimate.comparison.gbp.pence, 400 + 200)
+  assert.equal(estimate.exclusions.find(bucket => bucket.key === 'held')?.rows, 3)
+  assert.equal(estimate.exclusions.find(bucket => bucket.key === 'not-attributed')?.rows, 1)
 })
 
 test('unknown funding, free credit, held rows and unassigned work stay out of the charge with separate labels', () => {

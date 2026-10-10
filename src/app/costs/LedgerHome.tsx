@@ -31,8 +31,8 @@ export async function LedgerHome() {
     <div className={panel}>
       <p className="text-xs font-semibold uppercase tracking-widest text-blue-800">Ledger since 2026-08-13T23:00:00.000Z</p>
       <h2 className="mt-1 font-serif text-2xl font-medium">Known project costs</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Amounts below are native source currency. Provisional client charges use included 50%, on-demand face, and infrastructure face, with no markup. They are not approved. Reference FX in the month section is an estimate and does not set payment currency. Payment and expense currency is book GBP. {summary.usageRowsWithStoredFx} usage rows store a paid GBP rate.</p>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{refresh ? `Last local refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh has been recorded. Automatic collection is not running.'}</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Amounts below are native source currency. Provisional client charges use included premium at 50%, included Grok and Composer at 0%, all on-demand at 100%, and infrastructure at face value, with no markup. They are not approved. Reference FX in the month section is an estimate and does not set payment currency. Payment and expense currency is book GBP. {summary.usageRowsWithStoredFx} usage rows store a paid GBP rate.</p>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{refresh ? `Last local refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh status was recorded.'}</p>
       <p className="mt-2 text-sm text-slate-700">Infrastructure collection is manual. Latest stored infrastructure event: {infrastructureLatest}. A refresh does not read a new writer export.</p>
       <p className="mt-3"><Link href="/costs/issues" className="text-sm font-semibold text-blue-700 underline">Reconciliation issues</Link></p>
     </div>

@@ -44,7 +44,7 @@ export default async function ProjectCostPage({ params }: { params: { slug: stri
         <div><dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Allocated provider expenses</dt><dd className="mt-1 text-lg">{project.assigned ? (project.allocatedExpensePence ? outstandingLabel(project.allocatedExpensePence) : 'None') : 'Not allocated to a project'}</dd></div>
         <div><dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Approved outstanding</dt><dd className="mt-1 text-lg">{outstandingLabel(project.outstandingPence)}</dd></div>
       </dl>
-      <p className="mt-4 text-sm leading-6 text-slate-600">Provisional charges use the 50/100/face comparison policy and are not an invoice. Held events: {project.heldRows}. {project.outstandingPence === null ? 'No approved client charge is stored, so outstanding is not established.' : 'Outstanding is the approved snapshot only.'}</p>
+      <p className="mt-4 text-sm leading-6 text-slate-600">Provisional charges use the global rule: included premium Cursor at 50% of nominal, included Grok and Composer at 0%, all on-demand at 100% of provider cash, and infrastructure at face value, with zero markups and no daily membership. They are not an invoice. Held events: {project.heldRows}. {project.outstandingPence === null ? 'No approved client charge is stored, so outstanding is not established.' : 'Outstanding is the approved snapshot only.'}</p>
     </section>}
     <section className={panel}>
       <h2 className="font-serif text-xl">Related reconciliation issues</h2>

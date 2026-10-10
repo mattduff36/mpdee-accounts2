@@ -112,8 +112,8 @@ export async function ledger(month?: string, projectId?: string) {
     const revision = event.revisions[0]
     const policy = event.project ? resolvePolicy(policies, event.project.id, event.project.clientId, event.occurredAt) : null
     const hold = !revision ? 'Missing revision' : revision.quality !== 'complete' ? revision.reason ?? `Source coverage ${revision.quality}` : !event.project ? `Project ${event.attribution}` : !policy ? 'No effective charging policy' : null
-    const charge = !hold && policy && revision ? chargeUnits({ provider: event.provider, funding: revision.funding, nominal: revision.nominalUnits, cash: revision.providerUnits }, policy) : null
-    return { event, revision, policy, hold, charge }
+    const charge = !hold && policy && revision ? chargeUnits({ provider: event.provider, funding: revision.funding, nominal: revision.nominalUnits, cash: revision.providerUnits, model: event.model }, policy) : null
+    return { event, revision, policy, hold: hold ?? (charge === null ? 'Client charge unavailable: model or monetary basis needs review' : null), charge }
   })
   return { ...range, rows, projects, imports }
 }

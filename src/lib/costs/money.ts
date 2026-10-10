@@ -21,15 +21,27 @@ export function gbpPence(value: bigint, fx: string): bigint {
   return roundRatio(value * decimalUnits(fx, 8) * BigInt(100), UNIT * BigInt(100_000_000))
 }
 export type Policy = { billable: boolean; includedBaseBps: number; markupBps: number; infrastructureMarkupBps: number }
-export function chargeUnits(input: { provider: string; funding: string; nominal: bigint | null; cash: bigint | null }, policy: Policy): bigint | null {
+
+/** Corrected universal client charge. Stored included, markup and infrastructure rates stay typed and are not applied. */
+export const CHARGE_RULE_VERSION = 'mpdee-global-client-charge-v1'
+
+/** Exact Grok/Composer family names and their Cursor-prefixed or versioned aliases. */
+export function isGrokOrComposerFamily(model: string): boolean {
+  return /^(?:cursor-)?(?:grok|composer)(?:-.+)?$/i.test(model.trim())
+}
+
+export function chargeUnits(input: { provider: string; funding: string; nominal: bigint | null; cash: bigint | null; model?: string | null }, policy: Policy): bigint | null {
   if (!policy.billable) return BigInt(0)
-  if (input.funding === 'free') return BigInt(0)
-  const base = input.provider === 'cursor' && input.funding === 'included' ? input.nominal : input.cash
-  if (base === null || input.funding === 'unknown') return null
-  const bps = input.provider === 'cursor'
-    ? (input.funding === 'included' ? policy.includedBaseBps : 10000) + policy.markupBps
-    : 10000 + policy.infrastructureMarkupBps
-  return roundRatio(base * BigInt(bps), BigInt(10000))
+  if (input.funding === 'free' || input.funding === 'free-credit') return BigInt(0)
+  if (input.funding === 'unknown') return null
+  if (input.provider === 'cursor' && input.funding === 'included') {
+    const model = typeof input.model === 'string' ? input.model.trim() : ''
+    if (input.nominal === null || model === '' || /^(?:default|auto|unknown|unspecified)$/i.test(model)) return null
+    if (isGrokOrComposerFamily(model)) return BigInt(0)
+    return roundRatio(input.nominal * BigInt(5000), BigInt(10000))
+  }
+  if (input.cash === null) return null
+  return input.cash
 }
 export function percentBps(text: string): number {
   const amount = decimalUnits(text, 2)

@@ -2,6 +2,10 @@ import type { Policy } from './money'
 
 /** Shared iTrader ledger boundary. Comparison never starts earlier than this instant. */
 export const LEDGER_START = '2026-08-13T23:00:00.000Z'
+/**
+ * Wire contract for deployed strict iTrader readers. The value and object shape stay mpdee-comparison-policy-v1.
+ * Client charge amounts follow CHARGE_RULE_VERSION in money.ts. This constant does not version that calculation.
+ */
 export const COMPARISON_POLICY_VERSION = 'mpdee-comparison-policy-v1'
 export const ALLOCATION_METHOD = 'mpdee-subscription-allocation-v1'
 
@@ -26,16 +30,17 @@ export const CODE_POLICY_DEFAULTS = {
 
 /**
  * Known-project setup still writes this iTrader row when that effective date is absent.
- * The extra 10 percentage points and £0.38 day rate are live-setup values, not this comparison.
+ * Recorded rates are 50 percent included, no markup, no infrastructure markup and no daily membership.
+ * Those stored fields do not override CHARGE_RULE_VERSION.
  */
 export const ITRADER_KNOWN_PROJECT_SEED = {
   slug: 'itrader',
   effectiveAt: '2026-08-01T00:00:00.000Z',
   billable: true,
   includedBaseBps: 5000,
-  markupBps: 1000,
+  markupBps: 0,
   infrastructureMarkupBps: 0,
-  vercelDailyPence: 38,
+  vercelDailyPence: 0,
 } as const
 
 export type StoredPolicyRecord = {

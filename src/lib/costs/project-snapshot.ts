@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { chargeUnits, decimalUnits, roundRatio, UNIT, type Policy } from './money'
+import { CHARGE_RULE_VERSION, chargeUnits, decimalUnits, roundRatio, UNIT, type Policy } from './money'
 import type { FxQuote } from './fx-values'
 
 type SnapshotRow = {
-  event: { id: string; provider: string; occurredAt: Date }
+  event: { id: string; provider: string; occurredAt: Date; model?: string | null }
   revision?: { id: string; revision: number; checksum: string; createdAt: Date; funding: string; nominalUnits: bigint | null; providerUnits: bigint | null; currency: string; quality: string }
   policy: (Policy & { id: string; effectiveAt: Date }) | null
   hold: string | null
@@ -19,7 +19,7 @@ export function projectSnapshot(project: string, rows: SnapshotRow[], asOf: Date
   let heldCount = 0, fxMissing = 0
   for (const row of rows) {
     const revision = row.revision
-    const held = !!row.hold || !revision || !row.policy || revision.quality !== 'complete' || chargeUnits({ provider: row.event.provider, funding: revision.funding, nominal: revision.nominalUnits, cash: revision.providerUnits }, row.policy) === null
+    const held = !!row.hold || !revision || !row.policy || revision.quality !== 'complete' || chargeUnits({ provider: row.event.provider, funding: revision.funding, nominal: revision.nominalUnits, cash: revision.providerUnits, model: row.event.model ?? null }, row.policy) === null
     if (held) heldCount++
     if (!row.fx) fxMissing++
     const date = row.event.occurredAt.toISOString().slice(0, 10), category = categoryFor(row.event.provider), funding = revision?.funding ?? 'unknown', currency = revision?.currency ?? 'unknown'
@@ -29,13 +29,13 @@ export function projectSnapshot(project: string, rows: SnapshotRow[], asOf: Date
   }
   const lines = Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([key, group]) => {
     const ordered = [...group.rows].sort((a, b) => a.event.id.localeCompare(b.event.id))
-    const proofs = ordered.map(row => ({ eventId: row.event.id, provider: row.event.provider, revision: row.revision, policy: row.policy, hold: !!row.hold, fx: row.fx }))
+    const proofs = { chargeRule: CHARGE_RULE_VERSION, rows: ordered.map(row => ({ eventId: row.event.id, provider: row.event.provider, model: row.event.model ?? null, revision: row.revision, policy: row.policy, hold: !!row.hold, fx: row.fx })) }
     let sourceUnits = BigInt(0), gbpNumerator = BigInt(0)
     let missingFx = false
     for (const row of ordered) {
       if (group.held) continue
       // Preserve the ledger's 1e-7 source-unit rounding; round GBP pence only once per group.
-      const charge = chargeUnits({ provider: row.event.provider, funding: group.funding, nominal: row.revision!.nominalUnits, cash: row.revision!.providerUnits }, row.policy!)!
+      const charge = chargeUnits({ provider: row.event.provider, funding: group.funding, nominal: row.revision!.nominalUnits, cash: row.revision!.providerUnits, model: row.event.model ?? null }, row.policy!)!
       sourceUnits += charge
       if (!row.fx) { missingFx = true; continue }
       gbpNumerator += charge * decimalUnits(row.fx.rate, 8)
@@ -48,6 +48,6 @@ export function projectSnapshot(project: string, rows: SnapshotRow[], asOf: Date
   const dates = [...imports, ...rows.flatMap(r => r.revision ? [r.revision.createdAt] : [])].map(d => d.toISOString()).sort()
   const sourceUpdatedAt = dates.at(-1) ?? null
   const coverage = { events: rows.length, held: heldCount, fxMissing, from }
-  return { version: 'mpdee-project-cost-snapshot-v2' as const, project, approvedSnapshot: false as const, asOf: asOf.toISOString(), revision: hash({ project, lines, coverage }), sourceUpdatedAt, coverage, lines }
+  return { version: 'mpdee-project-cost-snapshot-v2' as const, project, approvedSnapshot: false as const, asOf: asOf.toISOString(), revision: hash({ project, chargeRule: CHARGE_RULE_VERSION, lines, coverage }), sourceUpdatedAt, coverage, lines }
 }
 

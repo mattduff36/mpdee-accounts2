@@ -12,6 +12,7 @@ export type MoneyEvent = {
   attribution: string
   hold: string | null
   coveredByProviderInvoice: boolean
+  model?: string | null
   fx: { rate: string; date: string; source: string } | null
 }
 
@@ -48,9 +49,10 @@ export function eventViews(event: MoneyEvent, policy: Policy = COMPARISON_POLICY
     funding: event.funding,
     nominal: event.nominalUnits,
     cash: event.providerUnits,
+    model: event.model ?? null,
   }, policy)
   let clientChargePence: bigint | null = null
-  if (clientCharge === null) note = note ?? 'Client charge is unavailable'
+  if (clientCharge === null) note = 'Client charge is unavailable: model or monetary basis needs review'
   else if (!event.fx) note = note ?? 'Missing FX'
   else clientChargePence = gbpPence(clientCharge, event.fx.rate)
   return { usageValue, providerCost, clientCharge, clientChargePence, includedCashIsNotSubscription, reason: note }

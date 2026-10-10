@@ -10,14 +10,14 @@ function storedPolicy(policy: { id: string; scopeKey: string; effectiveAt: Date;
   return { id: policy.id, scopeKey: policy.scopeKey, projectSlug, effectiveAt: policy.effectiveAt.toISOString(), effectiveUntil: policy.effectiveUntil?.toISOString() ?? null, billable: policy.billable, includedBaseBps: policy.includedBaseBps, markupBps: policy.markupBps, infrastructureMarkupBps: policy.infrastructureMarkupBps, vercelDailyPence: policy.vercelDailyPence }
 }
 
-function toEvent(event: { id: string; provider: string; accountRef: string; sourceKey: string; occurredAt: Date; projectId: string | null; attribution: string; revisions: { funding: string; nominalUnits: bigint | null; providerUnits: bigint | null; currency: string; quality: string; fxGbp: { toString(): string } | null; evidence: unknown }[] }): ComparisonEvent {
+function toEvent(event: { id: string; provider: string; accountRef: string; sourceKey: string; occurredAt: Date; projectId: string | null; attribution: string; model: string | null; revisions: { funding: string; nominalUnits: bigint | null; providerUnits: bigint | null; currency: string; quality: string; fxGbp: { toString(): string } | null; evidence: unknown }[] }): ComparisonEvent {
   const revision = event.revisions[0]
   const evidence = revision?.evidence
   const covered = Boolean(evidence && typeof evidence === 'object' && !Array.isArray(evidence) && 'coveredByProviderInvoice' in evidence && evidence.coveredByProviderInvoice === true)
   const rate = revision?.fxGbp?.toString() ?? null
   return {
     id: event.id, provider: event.provider, accountRef: event.accountRef, sourceKey: event.sourceKey, occurredAt: event.occurredAt, projectId: event.projectId,
-    funding: revision?.funding ?? 'unknown', nominalUnits: revision?.nominalUnits ?? null, providerUnits: revision?.providerUnits ?? null, currency: revision?.currency ?? 'unknown',
+    funding: revision?.funding ?? 'unknown', nominalUnits: revision?.nominalUnits ?? null, providerUnits: revision?.providerUnits ?? null, currency: revision?.currency ?? 'unknown', model: event.model,
     quality: revision?.quality ?? 'missing', attribution: event.attribution, hold: revision ? null : 'Missing revision', coveredByProviderInvoice: covered,
     fx: rate ? { rate, date: event.occurredAt.toISOString().slice(0, 10), source: 'Rate recorded with usage import' } : null,
   }

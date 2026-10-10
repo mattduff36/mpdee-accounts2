@@ -1,24 +1,25 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { decimalUnits, unitsText, chargeUnits, gbpPence, percentBps } from './money'
+import { decimalUnits, unitsText, chargeUnits, gbpPence, percentBps, CHARGE_RULE_VERSION, isGrokOrComposerFamily } from './money'
 import { importSchema, normalize } from './normalize'
 import { validIngestToken } from './machine-auth'
 import { resolvePolicy, monthRange } from './service'
 const policy = { billable: true, includedBaseBps: 5000, markupBps: 1000, infrastructureMarkupBps: 0 }
 const raw = { timestamp: '2026-09-26T15:36:24.000Z', model: 'example', conversationId: 'conversation-1', isTokenBasedCall: true, kind: 'USAGE_EVENT_KIND_USAGE_BASED', chargedCents: 233.65, usageBasedCosts: '2.34', cursorTokenFee: 0, tokenUsage: { inputTokens: 21, outputTokens: 3591, cacheReadTokens: 915305, cacheWriteTokens: 379699, totalCents: 233.65 } }
 const input = (events: unknown[], quality = 'complete') => importSchema.parse({ provider: 'cursor', accountRef: 'test-account', quality, events })
-test('iTrader charges 60% included and 110% on-demand, not a markup on discounted cost', () => {
-  assert.equal(unitsText(chargeUnits({ provider: 'cursor',funding:'included',nominal:decimalUnits('10'),cash:BigInt(0) },policy)!), '6.0000000')
-  assert.equal(unitsText(chargeUnits({ provider: 'cursor',funding:'on-demand',nominal:decimalUnits('10'),cash:decimalUnits('10') },policy)!), '11.0000000')
+test('included premium usage is half nominal and on-demand is cash, ignoring saved markups', () => {
+  const model = 'claude-4.6-sonnet'
+  assert.equal(unitsText(chargeUnits({ provider: 'cursor',funding:'included',nominal:decimalUnits('10'),cash:BigInt(0),model },policy)!), '5.0000000')
+  assert.equal(unitsText(chargeUnits({ provider: 'cursor',funding:'on-demand',nominal:decimalUnits('10'),cash:decimalUnits('10'),model },policy)!), '10.0000000')
   assert.equal(unitsText(chargeUnits({ provider: 'vercel',funding:'infrastructure',nominal:null,cash:decimalUnits('10') },policy)!), '10.0000000')
-  assert.equal(chargeUnits({ provider:'cursor',funding:'unknown',nominal:null,cash:null },policy),null)
-  assert.equal(chargeUnits({ provider:'cursor',funding:'included',nominal:decimalUnits('10'),cash:BigInt(0) },{...policy,billable:false}),BigInt(0))
+  assert.equal(chargeUnits({ provider:'cursor',funding:'unknown',nominal:null,cash:null,model },policy),null)
+  assert.equal(chargeUnits({ provider:'cursor',funding:'included',nominal:decimalUnits('10'),cash:BigInt(0),model },{...policy,billable:false}),BigInt(0))
 })
 test('precise cents differ from rounded display dollars and are retained', () => {
   const [event] = normalize(input([raw]))
   assert.equal(unitsText(event.cash!), '2.3365000')
   assert.equal(event.quality,'complete')
-  assert.equal(unitsText(chargeUnits({provider:'cursor',...event},policy)!), '2.5701500')
+  assert.equal(unitsText(chargeUnits({provider:'cursor',...event,model:'claude-4.6-sonnet'},policy)!), '2.3365000')
   assert.equal(decimalUnits('0.00000005'),BigInt(1))
   assert.equal(gbpPence(decimalUnits('2.3365'),'0.75'),BigInt(175))
   assert.equal(percentBps('12.35'),1235)
@@ -91,7 +92,7 @@ test('historical Pro and Pro Plus included labels use precise nominal value and 
     assert.equal(event.cash,BigInt(0))
     assert.equal(event.reason,null)
     assert.equal(event.quality,'complete')
-    assert.equal(chargeUnits({provider:'cursor',...event},policy),decimalUnits('1.4019'))
+    assert.equal(chargeUnits({provider:'cursor',...event,model:'claude-4.6-sonnet'},policy),decimalUnits('1.16825'))
     assert.equal(event.evidence.chargedCents,500)
     assert.equal(event.sourceKey,normalize(input([raw]))[0].sourceKey)
   }
@@ -115,6 +116,46 @@ test('precise zero nominal remains valid while unknown funding and fees remain h
     assert.equal(event.funding,'unknown');assert.equal(event.quality,'review')
   }
   assert.equal(normalize(input([{...raw,kind:'USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS',cursorTokenFee:1}]))[0].reason,'Nonzero Cursor fee requires reconciliation')
+})
+
+test('global charge rule zeroes both model families, halves other included usage, and keeps cash at face value', () => {
+  assert.equal(CHARGE_RULE_VERSION, 'mpdee-global-client-charge-v1')
+  const stale = { billable: true, includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 2500 }
+  const premium = 'claude-4.6-sonnet'
+  const nominal = decimalUnits('10')
+  const cash = decimalUnits('4')
+  const included = (model: string | null, amount: bigint | null = nominal) =>
+    chargeUnits({ provider: 'cursor', funding: 'included', nominal: amount, cash: BigInt(0), model }, stale)
+  for (const model of ['grok', 'composer', 'cursor-grok', 'cursor-composer', 'grok-4', 'GROK-4.5', ' cursor-grok-4.6-xhigh-fast ', 'Cursor-Grok-4', 'composer-2', 'COMPOSER-1.5', 'cursor-composer-2', 'Cursor-Composer-1']) {
+    assert.equal(isGrokOrComposerFamily(model), true, model)
+    assert.equal(included(model), BigInt(0), model)
+  }
+  for (const model of [premium, 'gpt-5.4', 'grokking-4', 'supergrok-1', 'cursor-claude-4.6', 'x-cursor-grok-4', 'notgrok-1']) {
+    assert.equal(isGrokOrComposerFamily(model), false, model)
+    assert.equal(included(model), decimalUnits('5'), model)
+  }
+  for (const model of ['default', 'AUTO', 'unknown', 'unspecified']) {
+    assert.equal(included(model), null, model)
+    assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash, model }, stale), cash, model)
+  }
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'free-credit', nominal, cash, model: premium }, stale), BigInt(0))
+  assert.equal(included(null), null)
+  assert.equal(included('   '), null)
+  assert.equal(included(premium, null), null)
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'unknown', nominal, cash, model: premium }, stale), null)
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'free', nominal, cash, model: premium }, stale), BigInt(0))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'included', nominal, cash: BigInt(0), model: 'grok-4' }, { ...stale, billable: false }), BigInt(0))
+  for (const model of ['grok-4', 'cursor-grok-4', 'composer-2', 'cursor-composer-2', premium]) {
+    assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash, model }, stale), cash, model)
+    assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash: decimalUnits('-1.25'), model }, stale), decimalUnits('-1.25'), model)
+  }
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash: null, model: premium }, stale), null)
+  assert.equal(chargeUnits({ provider: 'vercel', funding: 'infrastructure', nominal: null, cash, model: null }, stale), cash)
+  const [event] = normalize(input([{ ...raw, model: 'cursor-grok-4', kind: 'USAGE_EVENT_KIND_INCLUDED_IN_PRO' }]))
+  assert.equal(event.model, 'cursor-grok-4')
+  assert.equal(event.nominal, decimalUnits('2.3365'))
+  assert.equal(event.cash, BigInt(0))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: event.funding, nominal: event.nominal, cash: event.cash, model: event.model }, stale), BigInt(0))
 })
 
 test('historical display discrepancies stay held without replacing precise or missing amounts', () => {

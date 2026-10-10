@@ -28,6 +28,7 @@ type UsageRow = {
   resource_ref: string | null
   fx_gbp: string | null
   covered: string | null
+  model: string | null
 }
 
 type PolicyRow = {
@@ -88,7 +89,7 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
         r.revision, to_char(r."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS') AS revision_at,
         r.funding, r."nominalUnits"::text AS nominal_units, r."providerUnits"::text AS provider_units,
         r.currency, r.quality, e.attribution, e."resourceRef" AS resource_ref, r."fxGbp"::text AS fx_gbp,
-        r.evidence->>'coveredByProviderInvoice' AS covered
+        r.evidence->>'coveredByProviderInvoice' AS covered, e.model AS model
       FROM "CostUsageEvent" e
       JOIN "CostProject" p ON p.id = e."projectId"
       JOIN LATERAL (
@@ -124,7 +125,7 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
     nominalUnits: row.nominal_units === null ? null : BigInt(row.nominal_units),
     providerUnits: row.provider_units === null ? null : BigInt(row.provider_units),
     currency: row.currency, quality: row.quality, attribution: row.attribution, resourceRef: row.resource_ref,
-    recordedFx: row.fx_gbp, coveredByProviderInvoice: row.covered === 'true', provenance: 'live',
+    recordedFx: row.fx_gbp, coveredByProviderInvoice: row.covered === 'true', model: row.model, provenance: 'live',
   }))
   const quotes = await quotesFor(events)
   const extra: ExclusionBucket = {

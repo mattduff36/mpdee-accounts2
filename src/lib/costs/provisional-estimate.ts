@@ -23,6 +23,7 @@ export type EstimateEvent = {
   resourceRef?: string | null
   recordedFx?: string | null
   coveredByProviderInvoice?: boolean
+  model?: string | null
   provenance?: 'live' | 'local-shadow'
 }
 
@@ -127,6 +128,7 @@ export function estimateEvent(input: {
   resourceRef?: string | null
   recordedFx?: string | null
   coveredByProviderInvoice?: boolean
+  model?: string | null
   provenance?: EstimateEvent['provenance']
 }): EstimateEvent {
   return {
@@ -145,6 +147,7 @@ export function estimateEvent(input: {
     resourceRef: input.resourceRef,
     recordedFx: input.recordedFx,
     coveredByProviderInvoice: input.coveredByProviderInvoice,
+    model: input.model ?? null,
     provenance: input.provenance,
   }
 }
@@ -297,8 +300,9 @@ function combineNative(parts: NativeAmount[][]) {
 
 /**
  * Provisional comparison charge from latest event rows.
- * Included Cursor is 50% of nominal, on-demand is provider cash, infrastructure is face value.
- * Stored policy rates, invoices, payments and daily membership are not added to that charge.
+ * Included premium Cursor is 50% of nominal. Included Grok and Composer are 0%. All on-demand is 100% of provider cash. Infrastructure is face value.
+ * Stored policy percentages are historical. Only billable and date coverage select events for the current global-rule estimate.
+ * Invoices, payments and daily membership are not added to that charge.
  */
 export function provisionalComparisonEstimate(input: {
   asOf: string
@@ -358,6 +362,7 @@ export function provisionalComparisonEstimate(input: {
       attribution: event.attribution,
       hold: null,
       coveredByProviderInvoice: Boolean(event.coveredByProviderInvoice),
+      model: event.model ?? null,
       fx: fx ? { rate: fx.rate, date: fx.date, source: fx.source } : null,
     }, COMPARISON_POLICY)
     if (views.clientCharge === null) {
@@ -370,7 +375,7 @@ export function provisionalComparisonEstimate(input: {
     price(acc, event, views.clientCharge, basis, fx)
     const policy = policyOn(input.storedPolicies ?? [], event.occurredAt)
     if (!policy?.billable) { uncoveredRows += 1; continue }
-    const storedCharge = chargeUnits({ provider: event.provider, funding: event.funding, nominal: event.nominalUnits, cash: event.providerUnits }, policy)
+    const storedCharge = chargeUnits({ provider: event.provider, funding: event.funding, nominal: event.nominalUnits, cash: event.providerUnits, model: event.model ?? null }, policy)
     if (storedCharge === null) { uncoveredRows += 1; continue }
     const storedAcc = kind === 'included' ? storedIncluded : kind === 'on-demand' ? storedOnDemand : storedInfrastructure
     price(storedAcc, event, storedCharge, basis, fx)
@@ -469,8 +474,8 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
   }
   const rates = estimate.storedPolicy?.rates ?? []
   const rateText = rates.length
-    ? rates.map(rate => `included ${rate.includedBaseBps / 100}% plus markup ${rate.markupBps / 100} percentage points, on-demand ${100 + rate.markupBps / 100}%, infrastructure ${100 + rate.infrastructureMarkupBps / 100}%, saved daily rate £${(rate.vercelDailyPence / 100).toFixed(2)}`).join('; ')
-    : 'No covering stored rate priced these events.'
+    ? `Historical saved rates on file: ${rates.map(rate => `included ${rate.includedBaseBps / 100}%, markup ${rate.markupBps / 100} percentage points, infrastructure markup ${rate.infrastructureMarkupBps / 100} percentage points, saved daily rate £${(rate.vercelDailyPence / 100).toFixed(2)}, billable ${rate.billable ? 'yes' : 'no'}`).join('; ')}. Those saved percentages were not applied.`
+    : 'No covering stored policy dated these events.'
   return {
     title: COMPARISON_CHARGE_LABEL,
     headline: formatGbp(estimate.comparison.gbp),
@@ -479,8 +484,8 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
       { label: 'Ledger start', value: estimate.ledgerStart, detail: 'Events before this instant are outside the charge.' },
       { label: 'Event range', value: estimate.firstAt && estimate.lastAt ? `${estimate.firstAt} to ${estimate.lastAt}` : 'No events in this database', detail: 'Stored clocks are UTC digits. No hour was added for BST.' },
       { label: 'Observed', value: estimate.asOf, detail: estimate.latestRevisionAt ? `Latest stored revision clock ${estimate.latestRevisionAt}.` : 'No revision clock was stored on these rows.' },
-      componentLine('Included Cursor usage', '50% of nominal', estimate.included),
-      componentLine('On-demand Cursor', '100% of recorded provider cash', estimate.onDemand),
+      componentLine('Included Cursor usage', 'Premium models at 50% of nominal. Included Grok and Composer at 0%.', estimate.included),
+      componentLine('On-demand Cursor', '100% of recorded provider cash for every model.', estimate.onDemand),
       estimate.infrastructure.rows
         ? componentLine('Infrastructure', estimate.infrastructure.provenance === 'local-shadow' ? 'Face value, local shadow only.' : 'Face value from this database.', estimate.infrastructure)
         : { label: 'Infrastructure', value: 'Missing', detail: infraNote },
@@ -492,8 +497,9 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
       ...estimate.exclusions.filter(bucket => !['unknown-funding', 'free-credit', 'held'].includes(bucket.key) && bucket.rows > 0).map(bucket => exclusionLine(bucket.key)),
     ],
     pricing: [
-      `${estimate.policyVersion}. Included Cursor is 50% of nominal usage. On-demand Cursor is 100% of recorded provider cash. Eligible infrastructure is face value.`,
-      'No markup. No daily membership allocation.',
+      `${estimate.policyVersion}. Included premium Cursor is 50% of nominal usage. Included Grok and Composer are 0%. All on-demand Cursor is 100% of recorded provider cash. Eligible infrastructure is face value.`,
+      'No markup. No daily membership.',
+      'Included Grok and Composer at 0% stay included usage. They are not removed evidence and they are not free funding.',
       'Zero per-event cash on included usage is not a free subscription.',
       'GBP conversion uses a dated rate for each event. A rate recorded on the event takes precedence. Reference rates are estimates, not bank-settled GBP. Missing rates stay unavailable.',
       'Subscription invoices, allocated expenses, payments and credits are not added to this charge. Approved outstanding is separate.',
@@ -504,8 +510,8 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
     ],
     storedPolicy: estimate.storedPolicy ? {
       label: STORED_POLICY_LABEL,
-      value: estimate.storedPolicy.rows ? formatGbp(estimate.storedPolicy.gbp) : 'No stored rate was applied',
-      detail: `${rateText} The saved daily rate is not applied. ${estimate.storedPolicy.uncoveredRows} comparison events had no billable stored rate. This amount is separate from the comparison charge. Native ${formatNative(estimate.storedPolicy.nativeCharge)}.`,
+      value: estimate.storedPolicy.rows ? formatGbp(estimate.storedPolicy.gbp) : 'No billable stored policy covered these events',
+      detail: `${rateText} Only billable and date coverage from the stored policy is used for this global-rule estimate. The saved daily rate is not applied. ${estimate.storedPolicy.uncoveredRows} comparison events had no billable stored rate. This amount is separate from the comparison charge. Native ${formatNative(estimate.storedPolicy.nativeCharge)}.`,
     } : null,
   }
 }

@@ -1,20 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decimalUnits, chargeUnits, gbpPence } from './money'
-import { COMPARISON_POLICY, ITRADER_KNOWN_PROJECT_SEED, policyInventory, revisionOutcome } from './comparison-policy'
+import { decimalUnits, chargeUnits, gbpPence, CHARGE_RULE_VERSION } from './money'
+import { COMPARISON_POLICY, COMPARISON_POLICY_VERSION, ITRADER_KNOWN_PROJECT_SEED, policyInventory, revisionOutcome } from './comparison-policy'
 import { londonDayPeriod } from './membership-lines'
 import { normalize, importSchema } from './normalize'
 
 const raw = { timestamp: '2026-09-26T15:36:24.000Z', model: 'example', conversationId: 'conversation-1', isTokenBasedCall: true, kind: 'USAGE_EVENT_KIND_INCLUDED_IN_PRO', chargedCents: 0, usageBasedCosts: '0.00', cursorTokenFee: 0, tokenUsage: { totalCents: '10' } }
 
 test('comparison policy is 50 percent included, 100 percent on-demand, and face-value infrastructure', () => {
+  assert.equal(COMPARISON_POLICY_VERSION, 'mpdee-comparison-policy-v1')
+  assert.equal(COMPARISON_POLICY.version, COMPARISON_POLICY_VERSION)
+  assert.notEqual(CHARGE_RULE_VERSION, COMPARISON_POLICY_VERSION)
   assert.equal(COMPARISON_POLICY.vercelDailyPence, 0)
-  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'included', nominal: decimalUnits('10'), cash: BigInt(0) }, COMPARISON_POLICY)!), '5.0000000')
-  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal: decimalUnits('10'), cash: decimalUnits('10') }, COMPARISON_POLICY)!), '10.0000000')
+  assert.equal(ITRADER_KNOWN_PROJECT_SEED.includedBaseBps, 5000)
+  assert.equal(ITRADER_KNOWN_PROJECT_SEED.markupBps, 0)
+  assert.equal(ITRADER_KNOWN_PROJECT_SEED.infrastructureMarkupBps, 0)
+  assert.equal(ITRADER_KNOWN_PROJECT_SEED.vercelDailyPence, 0)
+  const model = 'claude-4.6-sonnet'
+  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'included', nominal: decimalUnits('10'), cash: BigInt(0), model }, COMPARISON_POLICY)!), '5.0000000')
+  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal: decimalUnits('10'), cash: decimalUnits('10'), model }, COMPARISON_POLICY)!), '10.0000000')
   assert.equal(unitsTextOf(chargeUnits({ provider: 'vercel', funding: 'infrastructure', nominal: null, cash: decimalUnits('4') }, COMPARISON_POLICY)!), '4.0000000')
-  const seeded = { ...COMPARISON_POLICY, markupBps: ITRADER_KNOWN_PROJECT_SEED.markupBps }
-  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'included', nominal: decimalUnits('10'), cash: BigInt(0) }, seeded)!), '6.0000000')
-  assert.equal(ITRADER_KNOWN_PROJECT_SEED.vercelDailyPence, 38)
+  const stale = { ...COMPARISON_POLICY, includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 1000 }
+  assert.equal(unitsTextOf(chargeUnits({ provider: 'cursor', funding: 'included', nominal: decimalUnits('10'), cash: BigInt(0), model }, stale)!), '5.0000000')
 })
 
 test('policy inventory keeps unread database rows distinct from code defaults and the seed', () => {
