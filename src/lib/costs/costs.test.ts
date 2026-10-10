@@ -155,7 +155,7 @@ test('precise zero nominal remains valid while unknown funding and fees remain h
 })
 
 test('global charge rule zeroes both model families, halves other included usage, and keeps cash at face value', () => {
-  assert.equal(CHARGE_RULE_VERSION, 'mpdee-global-client-charge-v1')
+  assert.equal(CHARGE_RULE_VERSION, 'mpdee-global-client-charge-v2')
   const stale = { billable: true, includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 2500 }
   const premium = 'claude-4.6-sonnet'
   const nominal = decimalUnits('10')
@@ -192,6 +192,27 @@ test('global charge rule zeroes both model families, halves other included usage
   assert.equal(event.nominal, decimalUnits('2.3365'))
   assert.equal(event.cash, BigInt(0))
   assert.equal(chargeUnits({ provider: 'cursor', funding: event.funding, nominal: event.nominal, cash: event.cash, model: event.model }, stale), BigInt(0))
+})
+
+test('explicit nondefault rates scale premium, Grok/Composer and on-demand, while credits and unknown sources stay held', () => {
+  const rates = { includedPremiumBps: 2500, includedGrokComposerBps: 2000, onDemandBps: 8000, dailyHostingPence: 125 }
+  const priced = { billable: true, includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 2500, rates }
+  const nominal = decimalUnits('10')
+  const cash = decimalUnits('4')
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'included', nominal, cash: BigInt(0), model: 'claude-4.6-sonnet' }, priced), decimalUnits('2.5'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'included', nominal, cash: BigInt(0), model: 'cursor-grok-4' }, priced), decimalUnits('2'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'included', nominal, cash: BigInt(0), model: 'composer-2' }, priced), decimalUnits('2'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash, model: 'claude-4.6-sonnet' }, priced), decimalUnits('3.2'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash, model: 'grok-4' }, priced), decimalUnits('3.2'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash: decimalUnits('-1.25'), model: 'composer-2' }, priced), decimalUnits('-1'))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'free-credit', nominal, cash, model: 'claude-4.6-sonnet' }, priced), BigInt(0))
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'free', nominal, cash, model: 'cursor-composer-2' }, priced), BigInt(0))
+  for (const model of ['default', 'AUTO', 'unknown', 'unspecified', null, '   ']) {
+    assert.equal(chargeUnits({ provider: 'cursor', funding: 'included', nominal, cash: BigInt(0), model }, priced), null, String(model))
+  }
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'unknown', nominal, cash, model: 'claude-4.6-sonnet' }, priced), null)
+  assert.equal(chargeUnits({ provider: 'cursor', funding: 'on-demand', nominal, cash: null, model: 'gpt-5' }, priced), null)
+  assert.equal(chargeUnits({ provider: 'vercel', funding: 'infrastructure', nominal: null, cash, model: null }, priced), cash)
 })
 
 test('historical display discrepancies stay held without replacing precise or missing amounts', () => {

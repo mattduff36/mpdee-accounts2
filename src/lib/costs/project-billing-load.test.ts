@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { DEFAULT_CALCULATION_RATES, type CalculationRates, type HostingSchedule } from './calculation-settings'
+import type { LoadedCalculationSettings } from './calculation-settings-load'
 import { LEDGER_START } from './comparison-policy'
 import { loadProjectBilling, loadProjectInvoiceGraph } from './project-billing-load'
 import { chargeableBillingRows, isExplicitProviderInvoiceCoverage, isSyntheticMembershipSource, loadProjectSnapshot } from './project-snapshot-load'
@@ -18,10 +20,29 @@ function event(id: string, sourceKey: string, occurredAt: string, provider = 've
   return { id, provider, accountRef: 'acct', sourceKey, occurredAt: new Date(occurredAt), model: null, revisions: [revision(id, evidence)] }
 }
 
+function memorySettings(input?: { rates?: CalculationRates; schedule?: HostingSchedule }) {
+  const calls = { count: 0 }
+  const rates = input?.rates ?? { ...DEFAULT_CALCULATION_RATES }
+  const schedule = input?.schedule ?? { hostingEnabled: false, hostingStartDate: null, hostingEndDate: null }
+  const loaded: LoadedCalculationSettings = {
+    global: rates,
+    globalRevision: 'memory-global',
+    projects: new Map(),
+    projectRevisions: new Map(),
+    resolve(projectId: string) {
+      if (!projectId) throw new Error('Invalid project')
+      return { rates, schedule, revision: 'memory-project', globalRevision: 'memory-global' }
+    },
+  }
+  return { calls, settings: async () => { calls.count += 1; return loaded } }
+}
+
 test('snapshot loader drops future events, synthetic membership, and explicit provider coverage before FX', async () => {
   let occurredAt: unknown
   let fxDates: string[] = []
+  const settings = memorySettings()
   const loaded = await loadProjectSnapshot('itrader', { from: LEDGER_START, asOf }, {
+    settings: settings.settings,
     fx: async rows => {
       fxDates = rows.map(row => row.event.occurredAt.toISOString())
       return { quotes: rows.map(() => ({ currency: 'GBP', date: '2026-09-02', rate: '1', source: 'test' })), unavailable: false }
@@ -39,6 +60,7 @@ test('snapshot loader drops future events, synthetic membership, and explicit pr
       costImportRun: { findFirst: async () => null },
     },
   })
+  assert.equal(settings.calls.count, 1)
   assert.equal(loaded.ok, true)
   if (!loaded.ok) return
   assert.deepEqual(occurredAt, { gte: new Date(LEDGER_START), lte: asOf })
@@ -73,11 +95,14 @@ test('billing load reuses one snapshot and does not charge membership or covered
     invoiceCostAssociation: { findMany: async () => [{ invoiceId: 'inv-1', projectId: 'project-1' }] },
     costProjectMapping: { findMany: async () => [{ type: 'invoice-project', value: 'inv-1', projectId: 'project-1' }, { type: 'invoice-project', value: 'missing-row', projectId: 'project-1' }] },
   }
+  const settings = memorySettings()
   const result = await loadProjectBilling('itrader', asOf, {
+    settings: settings.settings,
     db,
     fx: async rows => ({ quotes: rows.map(() => ({ currency: 'GBP', date: '2026-09-02', rate: '1', source: 'test' })), unavailable: false }),
   })
   assert.equal(calls.events, 1)
+  assert.equal(settings.calls.count, 1)
   assert.equal(result.status, 200)
   if (result.status !== 200 || !('costSnapshot' in result.body)) return
   assert.equal(result.body.costSnapshot.version, 'mpdee-project-cost-snapshot-v2')
@@ -115,4 +140,33 @@ test('invoice graph keeps cross-project links and drops orphan mapping values', 
   assert.deepEqual(graph.invoices.map(row => row.id), ['inv-1'])
   assert.deepEqual(graph.associations, [{ invoiceId: 'inv-1', projectId: 'project-1' }])
   assert.deepEqual(graph.mappings, [{ invoiceId: 'inv-1', projectId: 'project-2' }])
+})
+
+test('settings load once and a fee-only snapshot stays partial with zero source events', async () => {
+  const settings = memorySettings({
+    rates: { ...DEFAULT_CALCULATION_RATES, dailyHostingPence: 50 },
+    schedule: { hostingEnabled: true, hostingStartDate: '2026-10-10', hostingEndDate: '2026-10-10' },
+  })
+  const db = {
+    costProject: { findUnique: async () => ({ id: 'project-1', slug: 'itrader', clientId: 'client-1', archived: false }) },
+    costUsageEvent: { findMany: async () => [] },
+    costPolicy: { findMany: async () => [policy] },
+    costImportRun: { findFirst: async () => null },
+    invoice: { findMany: async () => [] },
+    invoiceCostAssociation: { findMany: async () => [] },
+    costProjectMapping: { findMany: async () => [] },
+  }
+  const result = await loadProjectBilling('itrader', asOf, { settings: settings.settings, db, fx: async () => ({ quotes: [], unavailable: false }) })
+  assert.equal(settings.calls.count, 1)
+  assert.equal(result.status, 200)
+  if (result.status !== 200 || !('costSnapshot' in result.body)) return
+  assert.equal(result.body.coverage.costsPartial, true)
+  assert.equal(result.body.costSnapshot.coverage.events, 0)
+  assert.equal(result.body.costSnapshot.coverage.held, 0)
+  assert.equal(result.body.costSnapshot.lines.length, 1)
+  assert.equal(result.body.costSnapshot.lines[0].category, 'VERCEL_HOSTING')
+  assert.equal(result.body.costSnapshot.lines[0].events, 0)
+  assert.equal(result.body.costSnapshot.lines[0].amountMinor, 50)
+  assert.equal(result.body.costTotalPence, 50)
+  assert.equal(JSON.stringify(result.body.costSnapshot).includes('providerCash'), false)
 })

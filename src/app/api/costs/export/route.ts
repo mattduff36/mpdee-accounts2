@@ -14,6 +14,6 @@ export async function GET(request: NextRequest) {
     chargeEstimate: r.charge === null ? null : unitsText(r.charge), currency: r.revision?.currency,
     fxGbp: r.revision?.fxGbp?.toString() ?? null, revision: r.revision?.revision, policyId: r.policy?.id ?? null,
     hold: r.hold, quality: r.revision?.quality,
-  })) }
+  })), calculatedAdjustments: data.hostingFees.map(fee => ({ date: fee.date, project: fee.projectSlug, label: fee.label, amountPence: fee.amountPence })).sort((a, b) => a.date.localeCompare(b.date) || a.project.localeCompare(b.project) || a.label.localeCompare(b.label)) }
   return new NextResponse(JSON.stringify(contents,null,2), { headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="project-costs-${data.month}.json"`, 'Cache-Control': 'private, no-store' } })
 }

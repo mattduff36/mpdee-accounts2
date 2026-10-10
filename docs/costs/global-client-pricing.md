@@ -1,72 +1,61 @@
-# Global client pricing
+# Global and project cost calculation settings
 
-This note describes the current Accounts calculation and the read-only project summary. It does not record a release, a production cutover, or a completed check against live data.
+## Current calculation
 
-## Universal charge rule
+The central rule is `CHARGE_RULE_VERSION = mpdee-global-client-charge-v2`.
+Open `/costs/settings` to save global defaults. Open `/costs/projects` to override individual fields for a project.
 
-Client charge amounts follow `CHARGE_RULE_VERSION` (`mpdee-global-client-charge-v1` in `src/lib/costs/money.ts`):
+| Setting | Initial default | Basis |
+| --- | --- | --- |
+| Included premium usage | 50% | Standard nominal value of included premium Cursor usage |
+| Included Grok and Composer usage | 0% | Standard nominal value of included Grok/Composer usage |
+| All on-demand usage | 100% | Recorded provider charge, including Grok and Composer |
+| Daily Vercel hosting charge | £0.00 | Additional GBP charge excluding VAT, enabled separately per project |
 
-- Included premium Cursor usage is 50% of nominal units.
-- Included Grok and Composer usage is 0%. Those rows stay included usage. They are not deleted evidence and they are not free funding.
-- All on-demand Cursor usage is 100% of recorded provider cash, for every model.
-- Eligible infrastructure (Vercel, Supabase, and manual infrastructure funding) is face value.
-- There is no markup and no daily membership in this charge.
-- GBP uses a dated rate for each event. A rate stored on the event wins. Reference rates are estimates, not bank-settled GBP. A missing rate stays unavailable (`null` pence, with the missing-row count kept explicit).
+Other eligible infrastructure is charged at its recorded amount. A daily hosting fee adds to actual Vercel costs; it does not replace them.
 
-`COMPARISON_POLICY_VERSION` (`mpdee-comparison-policy-v1`) is the existing comparison wire label. It does not version the amounts. Amounts follow `CHARGE_RULE_VERSION`.
+Percentages and GBP inputs support two decimal places. Percentages are stored as integer basis points, daily hosting as integer pence. Blank global inputs are invalid. Each project field either inherits the global default (`null`) or stores an explicit override. Zero is an override, not inheritance.
 
-## Saved rates are historical
+Saving rates recalculates historical cost reports using the current settings. Source usage, provider charges, import revisions, invoices, payments and approved snapshots are not rewritten. A changed global value affects only project fields still inheriting it. Saves require write access, reject stale revisions and record before/after audit details atomically.
 
-Stored `CostPolicy` percentages (`includedBaseBps`, `markupBps`, `infrastructureMarkupBps`, and `vercelDailyPence`) remain on file as history. The global-rule estimate uses billable and date coverage from those rows. It does not apply the saved percentages or the saved daily membership amount. The known iTrader seed row is that historical setup. It does not replace the universal rule.
+## Chargeable dates and hosting schedules
 
-Subscription invoices, allocated expenses, payments, and credits are not added to the provisional estimate. Approved outstanding is a separate figure.
+Existing `CostPolicy` records retain their billable flag and effective date ranges. Project date ranges take precedence, with client date ranges as fallback. An effective nonbillable range produces zero source client charge; missing date coverage holds it. The source provider cash and nominal usage remain evidence.
 
-## Model aliases and ambiguous labels
+The old `CostPolicy` percentage and daily amount columns remain historical data. They do not set current prices. Use Calculation setup and Project calculation rates for prices, and Chargeable dates for source eligibility.
 
-Included Grok and Composer match exact family names and Cursor-prefixed or versioned aliases: `(cursor-)?(grok|composer)(-...)`, case-insensitive. Examples include `grok-4` and `cursor-composer-2`.
+A project must separately enable its daily hosting fee and provide a start date. The end date is optional. Days are inclusive UTC dates, clipped to the report window and today/as-of date. A blank end continues through the current reporting date; future days are never accrued. Disabling the fee removes it from recalculated reports while preserving the saved rate and schedule. A zero resolved daily rate generates no fee.
 
-Included Cursor with an empty model, or a label of `default`, `auto`, `unknown`, or `unspecified`, is not priced. Those rows stay held. Unknown funding stays excluded and is not relabelled as free credit. Free and free-credit funding stay out of the comparison charge.
+Hosting schedules apply independently of source chargeable dates. Fees appear as separate calculated adjustments, including days with no source usage. They do not create provider events, provider cash, imports or nominal usage. A fee does not establish complete provider coverage. Project snapshots and billing retain the existing shared ledger start; earlier schedule dates are included only in reports whose coverage contains those days.
 
-## Live, provisional, and approved
+## Model and source handling
 
-The provisional estimate is the Accounts headline for included, on-demand, and infrastructure pence. It is not an approved invoice basis. `approvedSnapshot` on the summary is `false`.
+Included Grok and Composer use exact family names and Cursor-prefixed/versioned aliases, case-insensitively: `(cursor-)?(grok|composer)(-...)`. Examples include `grok-4` and `cursor-composer-2`.
 
-Infrastructure status comes from that estimate:
+Included usage with an empty, default, auto, unknown or unspecified model remains held. Unknown funding remains unavailable. Free and free-credit funding remain excluded. Explicit provider-invoice coverage and synthetic provider membership rows stay excluded from duplicate client charging. The separately configured hosting fee is not a provider membership import.
 
-- `absent` means no infrastructure rows are in the charge. Pence stay `null`, which is missing, not a verified zero.
-- `live` means infrastructure in this database is included at face value.
-- `local-shadow` means the rows are local shadow evidence only.
+GBP conversion uses the dated rate for each event. A rate stored with that event takes precedence over reference quotes. Reference FX remains an estimate, and missing FX remains unavailable with explicit coverage counts. Saving calculation settings does not fabricate or overwrite exchange rates.
 
-A component pence of `0` is a calculated zero (for example included Grok). `null` means the amount is absent or not established. Approved outstanding uses current approved client charges minus customer payments, credits, and prepaid amounts. No approved charge leaves outstanding pence `null` with a reason. A net of zero stays `0`. Estimates, subscription invoices, and provider bills are not that balance.
+## Reports and balances
 
-## Existing wire compatibility
+Overview, native project figures, estimates, project summaries, snapshots, billing history, monthly ledger responses and export adjustments use the resolved settings. Source counts, held counts and monetary availability remain distinct from known calculated hosting fees. Charts include fee-only dates without inventing provider cash or hiding missing source amounts.
 
-These contracts stay in place beside the new summary:
+The cost-versus-invoices report uses linked invoice totals excluding VAT for this version. Remaining to invoice is recorded project costs minus net invoiced amounts. Payments are not subtracted again. Approved outstanding remains a separate approved-charge/settlement figure.
 
-- `GET /api/costs/projects/{slug}/comparison` returns `mpdee-project-cost-comparison-v1` with `policyVersion` `mpdee-comparison-policy-v1`.
-- `GET /api/costs/projects/{slug}/snapshot` returns `mpdee-project-cost-snapshot-v2`.
-- The monthly ledger response remains provisional estimates and does not claim an approved snapshot.
+Current cost estimates remain provisional. Frozen legacy charges and approved snapshots are retained. Historical provider bills with unverified service periods stay available for review; their accounts-book gross is not automatically a client cost.
 
-The summary does not recalculate GBP from comparison line pence, does not fold frozen legacy charges into the provisional estimate, and does not add subscription invoices or payments to the estimate.
+## API compatibility
 
-## Summary endpoint
+Existing project contracts remain in place:
 
-`GET /api/costs/projects/{slug}/summary` is a read-only Node route (`force-dynamic`, `maxDuration` 60) with `Cache-Control: private, no-store`. The slug must match `^[a-z0-9]+(?:-[a-z0-9]+)*$`. The route calls `validProjectReadToken` before any data read. A missing or bad bearer token is 401. An unconfigured token map is 503. An absent or archived project is 404. A calculation failure is a generic 500 and does not return secrets or source errors. The route does not write and does not add a new authentication mechanism.
+- `/api/costs/projects/{slug}/comparison`: `mpdee-project-cost-comparison-v1`, with the existing `mpdee-comparison-policy-v1` wire label.
+- `/api/costs/projects/{slug}/snapshot`: `mpdee-project-cost-snapshot-v2`.
+- `/api/costs/projects/{slug}/summary`: `mpdee-project-cost-summary-v1`, with the current `pricingRuleVersion`.
+- `/api/costs/projects/{slug}/billing`: the existing billing contract.
+- Monthly ledger responses remain provisional; source exports include a separate calculated-adjustments collection.
 
-The body is `mpdee-project-cost-summary-v1`:
+Daily fees use the existing `VERCEL_HOSTING` category with the label “Daily hosting fee” and zero imported events. Source coverage is not inflated. Configuration revisions participate in calculation/snapshot revisions without pretending that source imports were refreshed.
 
-- `project` is the requested slug. `source` is `mpdee-accounts`. `pricingRuleVersion` is `CHARGE_RULE_VERSION`. `currency` is `GBP`.
-- `estimate.totalPence`, `includedPence`, `onDemandPence`, and `infrastructurePence` are the provisional estimate headline and component pence, as safe integers or `null`.
-- `fxEstimated` and `fxMissingRows` come from that same headline. `partial` is also true when infrastructure is absent or known project rows remain held, have unknown funding, lack explicit attribution, or have unreadable timestamps. Legitimate free or duplicate exclusions do not alone mark a total partial.
-- `coverage` reports event bounds, row counts, `infrastructureStatus`, and exclusions as key, label, rows, and reason only. Native decimal units are not serialized.
-- Exclusion reasons that still say `iTrader` are rewritten to neutral project language for every slug other than `itrader`.
-- `outstanding` is the approved balance and reason from `loadProjectComparison(slug, LEDGER_START, null)`.
-- `pricing` states the universal rule, including dated FX estimates.
-- `sourceUpdatedAt` is the latest underlying usage revision clock, not the request time. `asOf` is the estimate observation time.
-- `revision` is a SHA-256 over the project, central rule, ledger start, source revision, comparison revision, estimate, coverage, outstanding, and pricing. It excludes `asOf`.
+Project API reads use the existing distinct bearer-token hash map `COSTS_PROJECT_READ_TOKEN_SHA256_BY_SLUG`. Missing/bad tokens return 401, missing configuration 503, unavailable projects 404, and calculation failures generic errors. Administrator cookies and ingest credentials do not grant these project-token reads. Responses remain private and uncached.
 
-Authorization uses the existing project-scoped map `COSTS_PROJECT_READ_TOKEN_SHA256_BY_SLUG`: a JSON object of slug to distinct lowercase SHA-256 digests. Send `Authorization: Bearer` with the project token. Ingest credentials and administrator sessions do not grant this route.
-
-## Staged iTrader accounts-reader cutover
-
-iTrader can later read this summary for centrally calculated GBP. That reader switch is a later gate in `cutover-plan.md`. Until those gates pass, iTrader remains the writer, this summary stays provisional, and both applications must not issue charges for the same cost. Shipping this route does not enable the reader, freeze approved snapshots, or validate live totals.
+The iTrader local staging reader consumes Accounts costs and invoice balances. These settings preserve its existing DTO validation and do not deploy or redesign iTrader. Production rollout status belongs in release records.

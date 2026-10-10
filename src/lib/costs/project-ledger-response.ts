@@ -1,4 +1,5 @@
-import { unitsText } from './money'
+import { DAILY_HOSTING_LABEL, type DailyHostingFee } from './daily-hosting'
+import { UNIT, unitsText } from './money'
 
 type LedgerRow = {
   event: { occurredAt: Date; provider: string; model: string | null }
@@ -7,7 +8,12 @@ type LedgerRow = {
   charge: bigint | null
 }
 
-export function projectLedgerResponse(month: string, projectSlug: string, rows: LedgerRow[]) {
+function feeUnits(pence: number): bigint {
+  if (!Number.isSafeInteger(pence) || pence < 0) throw new Error('Invalid hosting fee')
+  return BigInt(pence) * UNIT / BigInt(100)
+}
+
+export function projectLedgerResponse(month: string, projectSlug: string, rows: LedgerRow[], hostingFees?: readonly DailyHostingFee[]) {
   const totals = new Map<string, { events: number; nominal: bigint; providerCost: bigint; estimatedCharge: bigint; nominalEvents: number; providerCostEvents: number; chargeEvents: number }>()
   const safeRows = rows.map(({ event, revision, hold, charge }) => {
     const currency = revision?.currency ?? null
@@ -32,13 +38,43 @@ export function projectLedgerResponse(month: string, projectSlug: string, rows: 
       hold: hold ? 'review-required' : null,
     }
   })
+  const fees = [...(hostingFees ?? [])].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
+  const seen = new Set<string>()
+  let gbpFees = BigInt(0)
+  const calculatedRows = []
+  for (const fee of fees) {
+    if (fee.providerCash !== false || fee.currency !== 'GBP' || fee.label !== DAILY_HOSTING_LABEL) throw new Error('Invalid hosting fee')
+    if (fee.amountPence === 0) continue
+    if (seen.has(fee.date)) throw new Error('Duplicate hosting fee date')
+    seen.add(fee.date)
+    const units = feeUnits(fee.amountPence)
+    gbpFees += units
+    calculatedRows.push({
+      occurredAt: `${fee.date}T00:00:00.000Z`,
+      provider: 'vercel',
+      model: DAILY_HOSTING_LABEL,
+      funding: 'infrastructure',
+      nominal: null,
+      providerCost: null,
+      estimatedCharge: unitsText(units),
+      currency: 'GBP',
+      quality: 'calculated',
+      hold: null,
+    })
+  }
+  if (gbpFees !== BigInt(0)) {
+    const total = totals.get('GBP') ?? { events: 0, nominal: BigInt(0), providerCost: BigInt(0), estimatedCharge: BigInt(0), nominalEvents: 0, providerCostEvents: 0, chargeEvents: 0 }
+    total.estimatedCharge += gbpFees
+    total.chargeEvents += 1
+    totals.set('GBP', total)
+  }
   return {
     version: 'mpdee-project-cost-ledger-v1',
     month,
     project: projectSlug,
     status: 'provisional-estimates',
     approvedSnapshot: false,
-    rows: safeRows,
+    rows: [...safeRows, ...calculatedRows],
     totals: Array.from(totals.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([currency, total]) => ({
       currency,
       events: total.events,

@@ -18,6 +18,18 @@ A complete, production-ready accounting and invoicing web application for UK sma
 - **Settings** - Company profile, invoice defaults, tax/VAT, email templates, audit log
 - **Data Export** - CSV export for all modules
 
+## Costs
+
+`/costs/settings` stores calculation rates. Defaults are 50% included premium, 0% included Grok/Composer, 100% on-demand, and £0 daily hosting.
+
+Saving settings recalculates existing cost reports. Source usage records and invoices stay as stored.
+
+A blank project field inherits the global rate. An explicit zero is applied as zero.
+
+A project fee has an enable flag, a start date, and an optional end date. Charged fee days are inclusive UTC dates, capped by today and by the report range. The fee excludes VAT and is added to actual Vercel costs.
+
+Dated chargeability still decides which source usage is charged. The hosting schedule decides fee days separately.
+
 ## Tech Stack
 
 - Next.js 14 (App Router)

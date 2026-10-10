@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { LEDGER_START } from '@/lib/costs/comparison-policy'
+import { loadCalculationSettings, type ResolvedProjectCalculation } from '@/lib/costs/calculation-settings-load'
 import { loadCostFigures } from '@/lib/costs/figures-load'
 import { nativeText, outstandingLabel } from '@/lib/costs/figures'
 import { loadProjectComparisonEstimate } from '@/lib/costs/provisional-load'
@@ -8,6 +9,18 @@ import { HistoricalBills } from './HistoricalBills'
 import { ItraderEstimate } from './ItraderEstimate'
 import { panel } from './ui'
 
+function percent(bps: number) {
+  return `${(bps / 100).toFixed(2).replace(/0$/, '').replace(/\.0$/, '')}%`
+}
+
+function rateLine(resolved: ResolvedProjectCalculation) {
+  const { rates, schedule } = resolved
+  const hosting = schedule.hostingEnabled
+    ? `Daily hosting £${(rates.dailyHostingPence / 100).toFixed(2)} from ${schedule.hostingStartDate}${schedule.hostingEndDate ? ` to ${schedule.hostingEndDate}` : ', with no end date'}, included in the provisional charge.`
+    : 'Daily hosting is not enabled for this project.'
+  return `Resolved rates: included premium ${percent(rates.includedPremiumBps)} of nominal, included Grok and Composer ${percent(rates.includedGrokComposerBps)}, on-demand ${percent(rates.onDemandBps)} of provider cash, infrastructure at face value. ${hosting} Amounts exclude VAT.`
+}
+
 function lines(label: string, totals: { currency: string; units: bigint; rows: number; missing: number }[]) {
   if (!totals.length) return <p className="mt-2 text-sm text-slate-600">{label}: none in this scope</p>
   return <p className="mt-2 text-sm text-slate-800">{label}: {totals.map(total => <span key={total.currency} className="mr-3 tabular-nums">{nativeText(total)}{total.missing ? ` (${total.missing} unknown)` : ''}</span>)}</p>
@@ -15,10 +28,15 @@ function lines(label: string, totals: { currency: string; units: bigint; rows: n
 
 /** Native ledger since the shared cutoff. Project cards exclude unassigned work. */
 export async function LedgerHome() {
-  const summary = await loadCostFigures()
-  const refresh = await prisma.costRefreshStatus.findUnique({ where: { id: 'current' } })
-  const infrastructure = await prisma.costUsageEvent.aggregate({ where: { provider: 'vercel', occurredAt: { gte: new Date(LEDGER_START) } }, _max: { occurredAt: true } })
+  const [summary, refresh, infrastructure, settings, projectIds] = await Promise.all([
+    loadCostFigures(),
+    prisma.costRefreshStatus.findUnique({ where: { id: 'current' } }),
+    prisma.costUsageEvent.aggregate({ where: { provider: 'vercel', occurredAt: { gte: new Date(LEDGER_START) } }, _max: { occurredAt: true } }),
+    loadCalculationSettings(),
+    prisma.costProject.findMany({ where: { archived: false }, select: { id: true, slug: true } }),
+  ])
   const infrastructureLatest = infrastructure._max.occurredAt ? infrastructure._max.occurredAt.toISOString() : 'none stored'
+  const idBySlug = new Map(projectIds.map(project => [project.slug, project.id]))
   const assigned = summary.projects.filter(project => project.assigned)
   const unassigned = summary.projects.find(project => !project.assigned)
   const itrader = summary.projects.find(project => project.slug === 'itrader')
@@ -31,7 +49,8 @@ export async function LedgerHome() {
     <div className={panel}>
       <p className="text-xs font-semibold uppercase tracking-widest text-blue-800">Ledger since 2026-08-13T23:00:00.000Z</p>
       <h2 className="mt-1 font-serif text-2xl font-medium">Known project costs</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Amounts below are native source currency. Provisional client charges use included premium at 50%, included Grok and Composer at 0%, all on-demand at 100%, and infrastructure at face value, with no markup. They are not approved. Reference FX in the month section is an estimate and does not set payment currency. Payment and expense currency is book GBP. {summary.usageRowsWithStoredFx} usage rows store a paid GBP rate.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Amounts below are native source currency and exclude VAT. Provisional client charges use each project’s resolved calculation rates and any enabled daily hosting fee. They are not approved invoices. Reference FX in the month section is an estimate and does not set payment currency. Payment and expense currency is book GBP. {summary.usageRowsWithStoredFx} usage rows store a paid GBP rate.</p>
+      <p className="mt-2 text-sm"><Link href="/costs/settings" className="font-semibold text-blue-700 underline">Calculation setup</Link> · <Link href="/costs/projects" className="font-semibold text-blue-700 underline">Projects & connections</Link></p>
       <p className="mt-2 text-sm leading-6 text-slate-600">{refresh ? `Last local refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh status was recorded.'}</p>
       <p className="mt-2 text-sm text-slate-700">Infrastructure collection is manual. Latest stored infrastructure event: {infrastructureLatest}. A refresh does not read a new writer export.</p>
       <p className="mt-3"><Link href="/costs/issues" className="text-sm font-semibold text-blue-700 underline">Reconciliation issues</Link></p>
@@ -40,8 +59,9 @@ export async function LedgerHome() {
     {comparisonError && <p className={`${panel} text-sm text-slate-700`}>The provisional iTrader comparison could not be calculated. {comparisonError}</p>}
     <div className={panel}><HistoricalBills bills={summary.unresolvedBills} /></div>
     <div className="grid gap-3 lg:grid-cols-2">
-      {assigned.map(project => <article key={project.slug} className={panel}>
+      {assigned.map(project => { const projectId = idBySlug.get(project.slug); return <article key={project.slug} className={panel}>
         <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="font-serif text-xl"><Link href={`/costs/projects/${project.slug}`} className="underline decoration-slate-300 underline-offset-4">{project.name}</Link></h3><p className="text-sm">Outstanding: {outstandingLabel(project.outstandingPence)}</p></div>
+        {projectId && <p className="mt-2 text-xs leading-5 text-slate-500">{rateLine(settings.resolve(projectId))}</p>}
         {project.slug === 'itrader' ? <p className="mt-2 text-sm text-slate-700">The provisional comparison charge is in the summary above. Held events on this card use the same assigned rows: {project.heldRows}.</p> : <>
         {lines('Nominal usage', project.usage)}
         {lines('Confirmed provider cost', project.confirmedProvider)}
@@ -49,8 +69,8 @@ export async function LedgerHome() {
         {lines('Provisional client charge', project.provisionalCharge)}
         </>}
         <p className="mt-2 text-sm text-slate-700">Allocated provider expenses: {project.allocatedExpensePence ? outstandingLabel(project.allocatedExpensePence) : 'none'}. Held events: {project.heldRows}.</p>
-        <p className="mt-2 text-xs leading-5 text-slate-500">Assigned events only. Unassigned usage and unallocated overhead are outside this total.</p>
-      </article>)}
+        <p className="mt-2 text-xs leading-5 text-slate-500">Assigned events only. Unassigned usage and unallocated overhead are outside this total. Outstanding is the approved snapshot only and is not this provisional charge.</p>
+      </article>})}
       <article className={panel}>
         <h3 className="font-serif text-xl"><Link href="/costs/projects/unassigned" className="underline decoration-slate-300 underline-offset-4">Unassigned and overhead</Link></h3>
         {unassigned ? <>{lines('Nominal usage', unassigned.usage)}{lines('Confirmed provider cost', unassigned.confirmedProvider)}{lines('Free-credit recorded charge', unassigned.freeCredit)}</> : <p className="mt-2 text-sm text-slate-600">No unassigned usage is in this database.</p>}

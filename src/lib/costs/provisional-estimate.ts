@@ -1,10 +1,12 @@
+import { DEFAULT_CALCULATION_RATES, type CalculationRates, type HostingSchedule } from './calculation-settings'
 import { COMPARISON_POLICY, COMPARISON_POLICY_VERSION, LEDGER_START } from './comparison-policy'
+import { type DailyHostingFee } from './daily-hosting'
 import { eventViews } from './four-views'
 import { quoteFor, type FxQuote } from './fx-values'
 import { coversDate } from './project-matrix'
 import { chargeUnits, decimalUnits, roundRatio, unitsText, UNIT, type Policy } from './money'
 
-export const COMPARISON_CHARGE_LABEL = 'Provisional iTrader comparison charge'
+export const COMPARISON_CHARGE_LABEL = 'Provisional iTrader costs'
 export const STORED_POLICY_LABEL = 'Stored policy client estimate'
 
 export type EstimateEvent = {
@@ -64,6 +66,18 @@ export type ExclusionBucket = {
   reason: string
 }
 
+export type EstimateCalculation = {
+  rates: CalculationRates
+  globalRevision: string | null
+  projectRevision: string | null
+  hostingEnabled: boolean
+  hostingStartDate: string | null
+  hostingEndDate: string | null
+  hostingFeeRows: number
+  hostingFeePence: number
+  hostingConfigRevisions: string[]
+}
+
 export type ProvisionalEstimate = {
   policyVersion: typeof COMPARISON_POLICY_VERSION
   ledgerStart: string
@@ -92,6 +106,27 @@ export type ProvisionalEstimate = {
     rates: { includedBaseBps: number; markupBps: number; infrastructureMarkupBps: number; vercelDailyPence: number; billable: boolean }[]
     dailyMembershipApplied: false
   } | null
+  calculation: EstimateCalculation
+}
+
+/** First UTC calendar day on or after an instant. A date-only value stays that day. 2026-08-13T23:00:00.000Z becomes 2026-08-14. */
+export function firstInclusiveUtcDate(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) throw new Error('Invalid report start')
+  const time = Date.parse(value)
+  const midnight = Date.parse(`${value.slice(0, 10)}T00:00:00.000Z`)
+  if (time <= midnight) return value.slice(0, 10)
+  return new Date(midnight + 86_400_000).toISOString().slice(0, 10)
+}
+
+function percentText(bps: number): string {
+  const text = (bps / 100).toFixed(2).replace(/0$/, '').replace(/\.0$/, '')
+  return `${text}%`
+}
+
+function pricedPolicy(rates: CalculationRates | undefined): Policy {
+  if (!rates) return COMPARISON_POLICY
+  return { billable: true, includedBaseBps: COMPARISON_POLICY.includedBaseBps, markupBps: COMPARISON_POLICY.markupBps, infrastructureMarkupBps: COMPARISON_POLICY.infrastructureMarkupBps, rates }
 }
 
 type DayAcc = { numerator: bigint; estimate: boolean; recordedRows: number; referenceRows: number }
@@ -104,9 +139,10 @@ const exclusionCopy: Record<string, { label: string; reason: string }> = {
   'free-credit': { label: 'Free-credit funding', reason: 'Free-credit funding stays separate from unknown funding and is excluded from the comparison charge.' },
   'free-funding': { label: 'Funding marked free', reason: 'A provider free label is excluded from the comparison charge.' },
   held: { label: 'Held for review', reason: 'Incomplete quality, missing amounts, or an unexpected category stay out of the charge.' },
+  'no-policy': { label: 'No effective charging policy', reason: 'No project or client policy covers this event date. The client charge is held, not treated as zero.' },
   'not-attributed': { label: 'Not explicitly attributed', reason: 'Unassigned and conflicting rows stay out of the iTrader charge.' },
   'before-ledger': { label: 'Before the ledger boundary', reason: 'Events before 2026-08-13T23:00:00.000Z are outside this charge.' },
-  membership: { label: 'Daily membership rows', reason: 'vercel:membership rows are excluded. The comparison adds no daily membership fee.' },
+  membership: { label: 'Daily membership rows', reason: 'Synthetic provider membership rows are excluded. Any configured daily hosting fee is calculated separately.' },
   'database-already-billed': { label: 'Database already in Vercel billing', reason: 'A database resource already present on a Vercel row is not charged again.' },
   'unreadable-time': { label: 'Unreadable event time', reason: 'The stored clock could not be read as UTC digits.' },
 }
@@ -300,9 +336,10 @@ function combineNative(parts: NativeAmount[][]) {
 
 /**
  * Provisional comparison charge from latest event rows.
- * Included premium Cursor is 50% of nominal. Included Grok and Composer are 0%. All on-demand is 100% of provider cash. Infrastructure is face value.
- * Stored policy percentages are historical. Only billable and date coverage select events for the current global-rule estimate.
- * Invoices, payments and daily membership are not added to that charge.
+ * Included and on-demand prices use the resolved calculation rates. Absent rates keep the 50% / 0% / 100% defaults.
+ * Infrastructure source rows stay at face value. Derived daily hosting is added once, separate from those rows.
+ * Stored policy percentages are historical. Only billable and date coverage select the stored-policy subtotal.
+ * Invoices, payments and daily membership rows are not added to the charge.
  */
 export function provisionalComparisonEstimate(input: {
   asOf: string
@@ -310,6 +347,11 @@ export function provisionalComparisonEstimate(input: {
   referenceQuotes?: FxQuote[]
   storedPolicies?: RatePolicy[]
   extraExclusions?: ExclusionBucket[]
+  rates?: CalculationRates
+  hostingFees?: DailyHostingFee[]
+  hostingSchedule?: HostingSchedule
+  globalRevision?: string | null
+  projectRevision?: string | null
 }): ProvisionalEstimate {
   const quotes = input.referenceQuotes ?? []
   const byIdentity = new Map<string, EstimateEvent>()
@@ -322,7 +364,11 @@ export function provisionalComparisonEstimate(input: {
       byIdentity.set(key, event)
     } else duplicateRevisions += 1
   }
-  const kept = Array.from(byIdentity.values())
+  const asOfTime = Date.parse(input.asOf)
+  const kept = Array.from(byIdentity.values()).filter(event => {
+    const instant = eventInstant(event.occurredAt)
+    return instant === null || !Number.isFinite(asOfTime) || instant <= asOfTime
+  })
   const vercelResources = new Set(kept.flatMap(event => event.provider === 'vercel' && event.resourceRef ? [event.resourceRef] : []))
   const exclusions = new Map<string, ExclusionBucket>()
   for (const key of ['unknown-funding', 'free-credit', 'held']) addExclusion(exclusions, key, null)
@@ -351,6 +397,14 @@ export function provisionalComparisonEstimate(input: {
       continue
     }
     const fx = resolveFx(event, quotes)
+    const enforceEligibility = input.storedPolicies !== undefined
+    const dated = enforceEligibility ? policyOn(input.storedPolicies ?? [], event.occurredAt) : null
+    if (enforceEligibility && !dated) {
+      addExclusion(exclusions, 'no-policy', event)
+      uncoveredRows += 1
+      continue
+    }
+    const priced = pricedPolicy(input.rates)
     const views = eventViews({
       id: `${event.provider}:${event.accountRef}:${event.sourceKey}`,
       provider: event.provider,
@@ -364,7 +418,7 @@ export function provisionalComparisonEstimate(input: {
       coveredByProviderInvoice: Boolean(event.coveredByProviderInvoice),
       model: event.model ?? null,
       fx: fx ? { rate: fx.rate, date: fx.date, source: fx.source } : null,
-    }, COMPARISON_POLICY)
+    }, dated && !dated.billable ? { ...priced, billable: false } : priced)
     if (views.clientCharge === null) {
       addExclusion(exclusions, 'held', event)
       continue
@@ -373,14 +427,13 @@ export function provisionalComparisonEstimate(input: {
     const basis = kind === 'included' ? event.nominalUnits : event.providerUnits
     const acc = kind === 'included' ? included : kind === 'on-demand' ? onDemand : infrastructure
     price(acc, event, views.clientCharge, basis, fx)
-    const policy = policyOn(input.storedPolicies ?? [], event.occurredAt)
-    if (!policy?.billable) { uncoveredRows += 1; continue }
-    const storedCharge = chargeUnits({ provider: event.provider, funding: event.funding, nominal: event.nominalUnits, cash: event.providerUnits, model: event.model ?? null }, policy)
+    if (!enforceEligibility || !dated?.billable) { uncoveredRows += 1; continue }
+    const storedCharge = chargeUnits({ provider: event.provider, funding: event.funding, nominal: event.nominalUnits, cash: event.providerUnits, model: event.model ?? null }, { ...dated, rates: input.rates ?? dated.rates })
     if (storedCharge === null) { uncoveredRows += 1; continue }
     const storedAcc = kind === 'included' ? storedIncluded : kind === 'on-demand' ? storedOnDemand : storedInfrastructure
     price(storedAcc, event, storedCharge, basis, fx)
-    if (!storedRates.some(rate => rate.includedBaseBps === policy.includedBaseBps && rate.markupBps === policy.markupBps && rate.infrastructureMarkupBps === policy.infrastructureMarkupBps && rate.vercelDailyPence === policy.vercelDailyPence && rate.billable === policy.billable)) {
-      storedRates.push({ includedBaseBps: policy.includedBaseBps, markupBps: policy.markupBps, infrastructureMarkupBps: policy.infrastructureMarkupBps, vercelDailyPence: policy.vercelDailyPence, billable: policy.billable })
+    if (!storedRates.some(rate => rate.includedBaseBps === dated.includedBaseBps && rate.markupBps === dated.markupBps && rate.infrastructureMarkupBps === dated.infrastructureMarkupBps && rate.vercelDailyPence === dated.vercelDailyPence && rate.billable === dated.billable)) {
+      storedRates.push({ includedBaseBps: dated.includedBaseBps, markupBps: dated.markupBps, infrastructureMarkupBps: dated.infrastructureMarkupBps, vercelDailyPence: dated.vercelDailyPence, billable: dated.billable })
     }
   }
   const includedComponent = finishComponent(included)
@@ -388,6 +441,31 @@ export function provisionalComparisonEstimate(input: {
   const infrastructureComponent = finishComponent(infrastructure)
   const active = [includedComponent.rows > 0, onDemandComponent.rows > 0, infrastructureComponent.rows > 0]
   for (const extra of input.extraExclusions ?? []) exclusions.set(extra.key, extra)
+  const fees = input.hostingFees ?? []
+  const hostingFeePence = fees.reduce((total, fee) => total + fee.amountPence, 0)
+  if (!Number.isSafeInteger(hostingFeePence)) throw new Error('Hosting fee total is not a safe integer')
+  const hostingUnits = BigInt(hostingFeePence) * UNIT / BigInt(100)
+  const schedule = input.hostingSchedule ?? { hostingEnabled: false, hostingStartDate: null, hostingEndDate: null }
+  const nativeCharge = combineNative([includedComponent, onDemandComponent, infrastructureComponent].filter((_, index) => active[index]).map(component => component.nativeCharge))
+  const gbp = combineGbp([includedComponent.gbp, onDemandComponent.gbp, infrastructureComponent.gbp], active)
+  const missingPolicy = (exclusions.get('no-policy')?.rows ?? 0) > 0
+  const comparisonGbp = fees.length === 0 ? { ...gbp, partial: gbp.partial || missingPolicy } : {
+    ...gbp,
+    pence: gbp.pence === null ? hostingFeePence : gbp.pence + hostingFeePence,
+    partial: gbp.partial || missingPolicy,
+  }
+  if (comparisonGbp.pence !== null && !Number.isSafeInteger(comparisonGbp.pence)) throw new Error('Comparison amount exceeds safe integer range')
+  const calculation: EstimateCalculation = {
+    rates: input.rates ?? { ...DEFAULT_CALCULATION_RATES },
+    globalRevision: input.globalRevision ?? null,
+    projectRevision: input.projectRevision ?? null,
+    hostingEnabled: schedule.hostingEnabled,
+    hostingStartDate: schedule.hostingStartDate,
+    hostingEndDate: schedule.hostingEndDate,
+    hostingFeeRows: fees.length,
+    hostingFeePence,
+    hostingConfigRevisions: Array.from(new Set(fees.map(fee => fee.configRevision))).sort(),
+  }
   return {
     policyVersion: COMPARISON_POLICY_VERSION,
     ledgerStart: LEDGER_START,
@@ -400,8 +478,8 @@ export function provisionalComparisonEstimate(input: {
     infrastructure: infrastructureComponent,
     comparison: {
       label: COMPARISON_CHARGE_LABEL,
-      nativeCharge: combineNative([includedComponent, onDemandComponent, infrastructureComponent].filter((_, index) => active[index]).map(component => component.nativeCharge)),
-      gbp: combineGbp([includedComponent.gbp, onDemandComponent.gbp, infrastructureComponent.gbp], active),
+      nativeCharge: fees.length === 0 ? nativeCharge : combineNative([nativeCharge, [{ currency: 'GBP', units: hostingUnits, rows: fees.length }]]),
+      gbp: comparisonGbp,
       infrastructureIncluded: infrastructureComponent.rows > 0,
       duplicateRevisions,
       coveredByProviderInvoiceRows,
@@ -416,6 +494,7 @@ export function provisionalComparisonEstimate(input: {
       rates: storedRates,
       dailyMembershipApplied: false,
     } : null,
+    calculation,
   }
 }
 
@@ -472,6 +551,10 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
     const recorded = bucket && bucket.recordedProvider.length ? ` Recorded provider amount ${formatNative(bucket.recordedProvider)}.` : ''
     return { label: bucket?.label ?? key, value: `${bucket?.rows ?? 0} events.${nominal}${recorded}`, detail: bucket?.reason ?? '' }
   }
+  const applied = estimate.calculation.rates
+  const hostingText = estimate.calculation.hostingFeeRows > 0
+    ? `Daily hosting fee £${(estimate.calculation.hostingFeePence / 100).toFixed(2)} across ${estimate.calculation.hostingFeeRows} days is included (${estimate.calculation.hostingConfigRevisions.join('; ')}).`
+    : 'No daily hosting fee is included.'
   const rates = estimate.storedPolicy?.rates ?? []
   const rateText = rates.length
     ? `Historical saved rates on file: ${rates.map(rate => `included ${rate.includedBaseBps / 100}%, markup ${rate.markupBps / 100} percentage points, infrastructure markup ${rate.infrastructureMarkupBps / 100} percentage points, saved daily rate £${(rate.vercelDailyPence / 100).toFixed(2)}, billable ${rate.billable ? 'yes' : 'no'}`).join('; ')}. Those saved percentages were not applied.`
@@ -484,8 +567,8 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
       { label: 'Ledger start', value: estimate.ledgerStart, detail: 'Events before this instant are outside the charge.' },
       { label: 'Event range', value: estimate.firstAt && estimate.lastAt ? `${estimate.firstAt} to ${estimate.lastAt}` : 'No events in this database', detail: 'Stored clocks are UTC digits. No hour was added for BST.' },
       { label: 'Observed', value: estimate.asOf, detail: estimate.latestRevisionAt ? `Latest stored revision clock ${estimate.latestRevisionAt}.` : 'No revision clock was stored on these rows.' },
-      componentLine('Included Cursor usage', 'Premium models at 50% of nominal. Included Grok and Composer at 0%.', estimate.included),
-      componentLine('On-demand Cursor', '100% of recorded provider cash for every model.', estimate.onDemand),
+      componentLine('Included Cursor usage', `Premium models at ${percentText(applied.includedPremiumBps)} of nominal. Included Grok and Composer at ${percentText(applied.includedGrokComposerBps)}.`, estimate.included),
+      componentLine('On-demand Cursor', `${percentText(applied.onDemandBps)} of recorded provider cash for every model.`, estimate.onDemand),
       estimate.infrastructure.rows
         ? componentLine('Infrastructure', estimate.infrastructure.provenance === 'local-shadow' ? 'Face value, local shadow only.' : 'Face value from this database.', estimate.infrastructure)
         : { label: 'Infrastructure', value: 'Missing', detail: infraNote },
@@ -497,8 +580,9 @@ export function presentProvisionalEstimate(estimate: ProvisionalEstimate, option
       ...estimate.exclusions.filter(bucket => !['unknown-funding', 'free-credit', 'held'].includes(bucket.key) && bucket.rows > 0).map(bucket => exclusionLine(bucket.key)),
     ],
     pricing: [
-      `${estimate.policyVersion}. Included premium Cursor is 50% of nominal usage. Included Grok and Composer are 0%. All on-demand Cursor is 100% of recorded provider cash. Eligible infrastructure is face value.`,
-      'No markup. No daily membership.',
+      `${estimate.policyVersion}. Included premium Cursor is ${percentText(applied.includedPremiumBps)} of nominal usage. Included Grok and Composer are ${percentText(applied.includedGrokComposerBps)}. All on-demand Cursor is ${percentText(applied.onDemandBps)} of recorded provider cash. Eligible infrastructure is face value.`,
+      `No markup. No daily membership. ${hostingText}`,
+      `Calculation settings global ${estimate.calculation.globalRevision ?? 'default'}, project ${estimate.calculation.projectRevision ?? 'default'}.`,
       'Included Grok and Composer at 0% stay included usage. They are not removed evidence and they are not free funding.',
       'Zero per-event cash on included usage is not a free subscription.',
       'GBP conversion uses a dated rate for each event. A rate recorded on the event takes precedence. Reference rates are estimates, not bank-settled GBP. Missing rates stay unavailable.',

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { DEFAULT_CALCULATION_RATES } from './calculation-settings'
 import { COMPARISON_POLICY, ITRADER_KNOWN_PROJECT_SEED, LEDGER_START } from './comparison-policy'
+import { DAILY_HOSTING_LABEL, type DailyHostingFee } from './daily-hosting'
 import { decimalUnits } from './money'
 import { presentProvisionalEstimate, provisionalComparisonEstimate, storedClockToIso, type EstimateEvent } from './provisional-estimate'
 
@@ -50,7 +52,7 @@ test('comparison prices included at 50 percent, on-demand at face value, and ign
   assert.equal(COMPARISON_POLICY.markupBps, 0)
   assert.equal(COMPARISON_POLICY.vercelDailyPence, 0)
   const presented = presentProvisionalEstimate(estimate, { infrastructureRowsInDatabase: 1 })
-  assert.equal(presented.title, 'Provisional iTrader comparison charge')
+  assert.equal(presented.title, 'Provisional iTrader costs')
   assert.match(presented.pricing.join(' '), /Included premium Cursor is 50%/)
   assert.match(presented.pricing.join(' '), /Included Grok and Composer are 0%/)
   assert.match(presented.pricing.join(' '), /100% of recorded provider cash/)
@@ -214,4 +216,104 @@ test('a database resource already billed through Vercel is not charged a second 
   })
   assert.equal(estimate.infrastructure.nativeCharge[0].units, decimalUnits('2'))
   assert.equal(estimate.exclusions.find(bucket => bucket.key === 'database-already-billed')?.rows, 1)
+})
+
+const saved = {
+  scope: 'project' as const, effectiveAt: '2026-08-01T00:00:00.000Z', effectiveUntil: null, billable: true,
+  includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 2500, vercelDailyPence: 38,
+}
+
+function hostingFee(amountPence: number): DailyHostingFee {
+  return {
+    id: 'internal:daily-hosting:p:2026-09-01', projectId: 'p', date: '2026-09-01', amountPence, currency: 'GBP',
+    category: 'VERCEL_HOSTING', funding: 'infrastructure', label: DAILY_HOSTING_LABEL, configRevision: 'hosting:p', providerCash: false,
+  }
+}
+
+test('a false billable policy keeps a known zero and the source basis, and a missing policy stays held', () => {
+  const quiet = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    storedPolicies: [{ ...saved, billable: false }],
+    events: [
+      event({ sourceKey: 'included' }),
+      event({ sourceKey: 'demand', funding: 'on-demand', nominalUnits: decimalUnits('4'), providerUnits: decimalUnits('4') }),
+    ],
+  })
+  assert.equal(quiet.included.rows, 1)
+  assert.equal(quiet.included.nativeCharge[0].units, BigInt(0))
+  assert.equal(quiet.included.nativeBasis[0].units, decimalUnits('10'))
+  assert.equal(quiet.onDemand.nativeCharge[0].units, BigInt(0))
+  assert.equal(quiet.onDemand.nativeBasis[0].units, decimalUnits('4'))
+  assert.equal(quiet.comparison.gbp.pence, 0)
+  assert.equal(quiet.comparison.gbp.partial, false)
+  assert.equal(quiet.storedPolicy?.rows, 0)
+  assert.equal(quiet.storedPolicy?.uncoveredRows, 2)
+  assert.equal(quiet.storedPolicy?.rates.length, 0)
+  const open = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    storedPolicies: [],
+    events: [event({ sourceKey: 'open', nominalUnits: decimalUnits('6'), providerUnits: decimalUnits('1') })],
+  })
+  assert.equal(open.included.rows, 0)
+  assert.equal(open.comparison.gbp.pence, null)
+  assert.equal(open.comparison.gbp.partial, true)
+  assert.equal(open.exclusions.find(bucket => bucket.key === 'no-policy')?.rows, 1)
+  assert.equal(open.exclusions.find(bucket => bucket.key === 'no-policy')?.nominal[0].units, decimalUnits('6'))
+  assert.equal(open.storedPolicy?.uncoveredRows, 1)
+})
+
+test('a project range gap falls back to the client policy, and configured rates replace saved percentages', () => {
+  const dated = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    storedPolicies: [
+      { ...saved, billable: false, effectiveAt: '2026-09-01T00:00:00.000Z', effectiveUntil: '2026-09-10T00:00:00.000Z' },
+      { ...saved, scope: 'client', billable: true, effectiveAt: '2026-01-01T00:00:00.000Z', effectiveUntil: null, includedBaseBps: 8000 },
+    ],
+    events: [
+      event({ sourceKey: 'inside', occurredAt: '2026-09-05T12:00:00.000Z' }),
+      event({ sourceKey: 'after', occurredAt: '2026-09-11T12:00:00.000Z' }),
+    ],
+  })
+  assert.equal(dated.included.rows, 2)
+  assert.equal(dated.included.nativeCharge[0].units, decimalUnits('5'))
+  assert.equal(dated.storedPolicy?.rows, 1)
+  assert.equal(dated.storedPolicy?.uncoveredRows, 1)
+  assert.equal(dated.storedPolicy?.nativeCharge[0].units, decimalUnits('5'))
+  const rates = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    storedPolicies: [saved],
+    rates: { ...DEFAULT_CALCULATION_RATES, includedPremiumBps: 2500, onDemandBps: 5000 },
+    events: [
+      event({ sourceKey: 'premium' }),
+      event({ sourceKey: 'demand', funding: 'on-demand', nominalUnits: decimalUnits('10'), providerUnits: decimalUnits('10') }),
+    ],
+  })
+  assert.equal(rates.included.nativeCharge[0].units, decimalUnits('2.5'))
+  assert.equal(rates.onDemand.nativeCharge[0].units, decimalUnits('5'))
+  assert.equal(rates.storedPolicy?.nativeCharge.find(amount => amount.currency === 'USD')?.units, decimalUnits('7.5'))
+  assert.equal(rates.storedPolicy?.rates[0].includedBaseBps, 6000)
+  assert.notEqual(rates.included.nativeCharge[0].units, decimalUnits('6'))
+})
+
+test('a known daily fee is added once when every source cost is held', () => {
+  const estimate = provisionalComparisonEstimate({
+    asOf,
+    referenceQuotes: [fx],
+    storedPolicies: [],
+    hostingFees: [hostingFee(38)],
+    events: [event({ sourceKey: 'held-source', nominalUnits: decimalUnits('9'), providerUnits: decimalUnits('2') })],
+  })
+  assert.equal(estimate.included.rows, 0)
+  assert.equal(estimate.exclusions.find(bucket => bucket.key === 'no-policy')?.rows, 1)
+  assert.equal(estimate.calculation.hostingFeeRows, 1)
+  assert.equal(estimate.calculation.hostingFeePence, 38)
+  assert.equal(estimate.comparison.gbp.pence, 38)
+  assert.equal(estimate.comparison.gbp.partial, true)
+  assert.equal(estimate.comparison.nativeCharge.length, 1)
+  assert.equal(estimate.comparison.nativeCharge[0].units, BigInt(3_800_000))
+  assert.notEqual(estimate.comparison.gbp.pence, 76)
 })

@@ -3,7 +3,7 @@ import { canWrite, requireAuth } from '@/lib/auth'
 import { PageHeader } from '@/components/PageHeader'
 import { LEDGER_START } from '@/lib/costs/comparison-policy'
 import { loadCostFigures } from '@/lib/costs/figures-load'
-import { liveIssueDrafts, mergeIssue, recordedIssueDrafts } from '@/lib/costs/reconciliation'
+import { liveIssueDrafts, mergeIssue } from '@/lib/costs/reconciliation'
 import { prisma } from '@/lib/db'
 import { inputClass, panel } from '../ui'
 import { HistoricalBills } from '../HistoricalBills'
@@ -19,7 +19,7 @@ export default async function ReconciliationIssuesPage({ searchParams }: { searc
   const project = searchParams.project && /^[a-z0-9-]+$/.test(searchParams.project) ? searchParams.project : ''
   const stored = await prisma.costReconciliationIssue.findMany({ include: { events: { orderBy: { createdAt: 'desc' }, take: 8 } } })
   const storedByKey = new Map(stored.map(issue => [issue.stableKey, issue]))
-  const issues = [...liveIssueDrafts(summary), ...recordedIssueDrafts()].map(draft => {
+  const issues = liveIssueDrafts(summary).map(draft => {
     const row = storedByKey.get(draft.stableKey)
     return { ...mergeIssue(row ?? null, draft), events: row?.events ?? [] }
   }).filter(issue => !status || issue.status === status)
@@ -38,7 +38,7 @@ export default async function ReconciliationIssuesPage({ searchParams }: { searc
   ])
   return <div className="space-y-6 pb-10">
     <PageHeader title="Reconciliation issues" description="Open questions stay visible. Marking an issue reviewed or resolved does not change usage, bills, payments, or approved charges." />
-    <p className="max-w-3xl text-sm leading-6 text-slate-600">{refresh ? `Last refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh has been recorded. Automatic collection is not running.'}</p>
+    <p className="max-w-3xl text-sm leading-6 text-slate-600">{refresh ? `Last refresh ${refresh.finishedAt.toISOString()}. ${refresh.unavailableNote}` : 'No local refresh has been recorded.'}</p>
     <div className="max-w-3xl"><HistoricalBills bills={summary.unresolvedBills} /></div>
     <p className="max-w-3xl text-sm text-slate-700">Infrastructure collection is manual. Latest stored infrastructure event: {infrastructureLatest}. A refresh does not read a new writer export.</p>
     <nav aria-label="Issue filters" className="flex flex-wrap gap-2 text-sm">

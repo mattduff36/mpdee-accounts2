@@ -158,6 +158,7 @@ function classifyInvoice(invoice: BillingInvoice, projectId: string, clientId: s
 }
 
 function costsPartial(snapshot: BillingSnapshot) {
+  if (snapshot.coverage.events === 0) return true
   if (snapshot.lines.length === 0) return true
   if (snapshot.coverage.held > 0 || snapshot.coverage.fxMissing > 0) return true
   return snapshot.lines.some(line => line.held || line.amountMinor === null)

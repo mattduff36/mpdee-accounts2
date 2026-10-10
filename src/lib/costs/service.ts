@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { importSchema, normalize, retainTaskContext } from './normalize'
+import { loadCalculationSettings } from './calculation-settings-load'
+import { dailyHostingFees, type DailyHostingFee } from './daily-hosting'
 import { chargeUnits, type Policy } from './money'
 import { coversDate } from './project-matrix'
 
@@ -99,21 +101,39 @@ export function monthRange(value?: string) {
   end.setUTCMonth(end.getUTCMonth() + 1)
   return { month, start, end }
 }
+export type LedgerHostingFee = DailyHostingFee & { projectName: string; projectSlug: string }
+
 export async function ledger(month?: string, projectId?: string) {
   const range = monthRange(month)
-  const [events, policies, projects, imports] = await Promise.all([
+  const [events, policies, projects, imports, settings] = await Promise.all([
     prisma.costUsageEvent.findMany({ where: { occurredAt: { gte: range.start, lt: range.end }, ...(projectId === 'unassigned' ? { projectId: null } : projectId ? { projectId } : {}) },
       include: { project: true, revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 50001 }),
     prisma.costPolicy.findMany(), prisma.costProject.findMany({ orderBy: { name: 'asc' }, include: { client: true } }),
     prisma.costImportRun.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
+    loadCalculationSettings(),
   ])
   if (events.length > 50000) throw new Error('This month exceeds the interactive limit. Filter by project to see complete totals.')
   const rows = events.map(event => {
     const revision = event.revisions[0]
-    const policy = event.project ? resolvePolicy(policies, event.project.id, event.project.clientId, event.occurredAt) : null
+    const dated = event.project ? resolvePolicy(policies, event.project.id, event.project.clientId, event.occurredAt) : null
+    const policy: (DatedPolicy & { rates: Policy['rates'] }) | null = dated ? { ...dated, rates: settings.resolve(event.project!.id).rates } : null
     const hold = !revision ? 'Missing revision' : revision.quality !== 'complete' ? revision.reason ?? `Source coverage ${revision.quality}` : !event.project ? `Project ${event.attribution}` : !policy ? 'No effective charging policy' : null
     const charge = !hold && policy && revision ? chargeUnits({ provider: event.provider, funding: revision.funding, nominal: revision.nominalUnits, cash: revision.providerUnits, model: event.model }, policy) : null
     return { event, revision, policy, hold: hold ?? (charge === null ? 'Client charge unavailable: model or monetary basis needs review' : null), charge }
   })
-  return { ...range, rows, projects, imports }
+  const from = range.start.toISOString().slice(0, 10)
+  const to = new Date(range.end.getTime() - 86_400_000).toISOString().slice(0, 10)
+  const today = new Date().toISOString().slice(0, 10)
+  const hostingFees: LedgerHostingFee[] = projects.filter(project => {
+    if (project.archived) return false
+    if (projectId === 'unassigned') return false
+    if (projectId) return project.id === projectId
+    return true
+  }).flatMap(project => {
+    const resolved = settings.resolve(project.id)
+    return dailyHostingFees(project.id, resolved.rates, resolved.schedule, { from, to, asOf: today, today }).map(fee => ({
+      ...fee, projectName: project.name, projectSlug: project.slug,
+    }))
+  })
+  return { ...range, rows, projects, imports, hostingFees }
 }

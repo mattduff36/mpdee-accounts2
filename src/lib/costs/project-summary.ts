@@ -37,6 +37,15 @@ export type ProjectCostSummary = {
   pricing: string[]
 }
 
+function infrastructurePence(estimate: ProvisionalEstimate, status: ProvisionalEstimate['infrastructure']['provenance']): number | null {
+  const feePence = estimate.calculation.hostingFeePence
+  const actual = status === 'absent' ? null : integerPence(estimate.infrastructure.gbp.pence)
+  if (actual === null && status !== 'absent') return null
+  if (actual === null && feePence === 0) return null
+  const total = (actual ?? 0) + feePence
+  return integerPence(total)
+}
+
 function integerPence(value: number | null): number | null {
   if (value === null) return null
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new Error('Summary amount exceeds safe integer range')
@@ -65,7 +74,7 @@ export function projectCostSummary(input: {
     totalPence: integerPence(estimate.comparison.gbp.pence),
     includedPence: integerPence(estimate.included.gbp.pence),
     onDemandPence: integerPence(estimate.onDemand.gbp.pence),
-    infrastructurePence: infrastructureStatus === 'absent' ? null : integerPence(estimate.infrastructure.gbp.pence),
+    infrastructurePence: infrastructurePence(estimate, infrastructureStatus),
     partial: estimate.comparison.gbp.partial || infrastructureStatus === 'absent' || estimate.exclusions.some(bucket => bucket.rows > 0 && ['held', 'unknown-funding', 'not-attributed', 'unreadable-time'].includes(bucket.key)),
     fxEstimated: estimate.comparison.gbp.estimate,
     fxMissingRows: estimate.comparison.gbp.fxMissingRows,

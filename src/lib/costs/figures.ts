@@ -1,6 +1,8 @@
 import { excludedFromClientAndConfirmedCash, isFreeCredit, showsConfirmedProviderCash } from './charge-eligibility'
+import type { CalculationRates } from './calculation-settings'
 import { COMPARISON_POLICY } from './comparison-policy'
-import { chargeUnits, unitsText } from './money'
+import { chargeUnits, UNIT, unitsText, type Policy } from './money'
+import { resolvePolicy, type DatedPolicy } from './service'
 
 export { isConfirmedProviderCash, isFreeCredit } from './charge-eligibility'
 
@@ -20,6 +22,12 @@ export type UsageGroup = {
   nominalUnits: bigint | null
   /** Per-event provider cash. Null stays unknown and is never treated as zero. */
   providerUnits: bigint | null
+  /**
+   * Dated source policy from a production read.
+   * Omitted callers keep the historical always-billable charge.
+   * `uncovered` holds the client charge. `nonbillable` is a known zero.
+   */
+  sourceEligibility?: 'billable' | 'nonbillable' | 'uncovered'
 }
 
 export type MoneyTotal = { currency: string; units: bigint; rows: number; missing: number }
@@ -96,8 +104,49 @@ export function currentApprovedTotals(rows: ApprovedSnapshotTotal[]): { projectI
   return Array.from(totals, ([projectId, approvedPence]) => ({ projectId, approvedPence }))
 }
 
+export type ProjectHostingFee = { slug: string; name: string; amountPence: number; days: number }
+
+function pricedPolicy(rates: CalculationRates | undefined): Policy {
+  if (!rates) return COMPARISON_POLICY
+  return { billable: true, includedBaseBps: COMPARISON_POLICY.includedBaseBps, markupBps: COMPARISON_POLICY.markupBps, infrastructureMarkupBps: COMPARISON_POLICY.infrastructureMarkupBps, rates }
+}
+
+function hostingUnits(amountPence: number): bigint {
+  if (!Number.isSafeInteger(amountPence) || amountPence < 0) throw new Error('Hosting fee total is not a safe integer')
+  return BigInt(amountPence) * UNIT / BigInt(100)
+}
+
+/** Assigned events resolve project policy, then a client policy. Unassigned events omit eligibility. */
+export function sourceEligibilityFor(policies: DatedPolicy[], projectId: string | null, clientId: string | null, occurredAt: Date): UsageGroup['sourceEligibility'] {
+  if (!projectId) return undefined
+  const policy = resolvePolicy(policies, projectId, clientId, occurredAt)
+  if (!policy) return 'uncovered'
+  return policy.billable ? 'billable' : 'nonbillable'
+}
+
+/** Same monetary identity stays one group. Eligibility splits a group only when the dated policy differs. Amounts stay per event. */
+export function groupSourceUsage(rows: Omit<UsageGroup, 'rows'>[]): UsageGroup[] {
+  const grouped = new Map<string, UsageGroup>()
+  for (const row of rows) {
+    const key = [
+      row.slug, row.name, row.provider, row.funding, row.currency, row.quality, String(row.assigned), row.model ?? '',
+      row.sourceKey, String(row.coveredByProviderInvoice), row.nominalUnits?.toString() ?? '', row.providerUnits?.toString() ?? '',
+      row.sourceEligibility ?? '',
+    ].join('\0')
+    const current = grouped.get(key)
+    if (current) current.rows += 1
+    else grouped.set(key, { ...row, rows: 1 })
+  }
+  return Array.from(grouped.values())
+}
+
 /** Project totals contain assigned work only. Unassigned rows stay on their own figure. */
-export function summariseProjects(groups: UsageGroup[], snapshots: { slug: string; approvedPence: number | null }[], allocated: { slug: string; pence: number }[]): ProjectFigure[] {
+export function summariseProjects(
+  groups: UsageGroup[],
+  snapshots: { slug: string; approvedPence: number | null }[],
+  allocated: { slug: string; pence: number }[],
+  options?: { ratesBySlug?: ReadonlyMap<string, CalculationRates>; hostingFees?: ProjectHostingFee[] },
+): ProjectFigure[] {
   const bySlug = new Map<string, ProjectFigure>()
   const figure = (group: UsageGroup) => {
     const current = bySlug.get(group.slug) ?? {
@@ -113,11 +162,24 @@ export function summariseProjects(groups: UsageGroup[], snapshots: { slug: strin
     if (isFreeCredit(group.funding)) addAmount(row.freeCredit, group.currency, group.providerUnits, group.rows)
     else if (showsConfirmedProviderCash(group)) addAmount(row.confirmedProvider, group.currency, group.providerUnits, group.rows)
     if (isFreeCredit(group.funding) || excludedFromClientAndConfirmedCash(group)) continue
-    const perEvent = group.assigned && group.quality === 'complete'
-      ? chargeUnits({ provider: group.provider, funding: group.funding, nominal: group.nominalUnits, cash: group.providerUnits, model: group.model }, COMPARISON_POLICY)
-      : null
+    if (group.sourceEligibility === 'uncovered' || !group.assigned || group.quality !== 'complete') {
+      row.heldRows += group.rows
+      continue
+    }
+    const priced = pricedPolicy(options?.ratesBySlug?.get(group.slug))
+    const policy = group.sourceEligibility === 'nonbillable' ? { ...priced, billable: false } : priced
+    const perEvent = chargeUnits({ provider: group.provider, funding: group.funding, nominal: group.nominalUnits, cash: group.providerUnits, model: group.model }, policy)
     if (perEvent === null) row.heldRows += group.rows
     else addAmount(row.provisionalCharge, group.currency, perEvent, group.rows)
+  }
+  for (const fee of options?.hostingFees ?? []) {
+    if (fee.days === 0 || fee.amountPence === 0) continue
+    const row = bySlug.get(fee.slug) ?? {
+      slug: fee.slug, name: fee.name, assigned: true, usage: [], confirmedProvider: [], freeCredit: [], provisionalCharge: [],
+      heldRows: 0, allocatedExpensePence: 0, outstandingPence: null,
+    }
+    bySlug.set(fee.slug, row)
+    add(row.provisionalCharge, 'GBP', hostingUnits(fee.amountPence), fee.days)
   }
   for (const snapshot of snapshots) {
     const row = bySlug.get(snapshot.slug)

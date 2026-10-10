@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, context: { params: { slug: strin
     const project = await prisma.costProject.findUnique({ where: { slug }, select: { id: true, slug: true } })
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404, headers })
     const data = await ledger(month, project.id)
-    return NextResponse.json(projectLedgerResponse(data.month, project.slug, data.rows), { headers })
+    return NextResponse.json(projectLedgerResponse(data.month, project.slug, data.rows, data.hostingFees), { headers })
   } catch {
     return NextResponse.json({ error: 'Project ledger unavailable' }, { status: 500, headers })
   }

@@ -1,9 +1,12 @@
 import { prisma } from '@/lib/db'
-import { LEDGER_START, type StoredPolicyRecord } from './comparison-policy'
+import { loadCalculationSettings } from './calculation-settings-load'
+import { type StoredPolicyRecord } from './comparison-policy'
 import { projectComparison, type ComparisonEvent } from './comparison-snapshot'
+import { dailyHostingFees } from './daily-hosting'
 import { fetchReferenceRates } from './fx'
 import { referenceYears, type FxQuote } from './fx-values'
 import type { SettlementDocuments } from './four-views'
+import { firstInclusiveUtcDate } from './provisional-estimate'
 import type { AllocationEvent } from './subscription-allocation'
 
 function storedPolicy(policy: { id: string; scopeKey: string; effectiveAt: Date; effectiveUntil: Date | null; billable: boolean; includedBaseBps: number; markupBps: number; infrastructureMarkupBps: number; vercelDailyPence: number }, projectSlug: string | null): StoredPolicyRecord {
@@ -27,8 +30,12 @@ function toEvent(event: { id: string; provider: string; accountRef: string; sour
 export async function loadProjectComparison(slug: string, from: string, subscriptionText: string | null) {
   const project = await prisma.costProject.findUnique({ where: { slug }, include: { policies: true, client: { include: { costPolicies: true } } } })
   if (!project || project.archived) throw new Error('Project not found')
-  const occurredAt = { gte: new Date(from) }
-  const projectEvents = await prisma.costUsageEvent.findMany({ where: { projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 })
+  const asOf = new Date()
+  const occurredAt = { gte: new Date(from), lte: asOf }
+  const [projectEvents, settings] = await Promise.all([
+    prisma.costUsageEvent.findMany({ where: { projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }),
+    loadCalculationSettings(),
+  ])
   if (projectEvents.length > 50000) throw new Error('Complete project history exceeds comparison limit')
   const accounts = Array.from(new Map(projectEvents.map(event => [`${event.provider}:${event.accountRef}`, { provider: event.provider, accountRef: event.accountRef }])).values())
   const unassigned = accounts.length ? await prisma.costUsageEvent.findMany({ where: { projectId: null, occurredAt, OR: accounts }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }) : []
@@ -55,7 +62,10 @@ export async function loadProjectComparison(slug: string, from: string, subscrip
   const replaced = new Set(snapshots.flatMap(row => row.replacesSnapshotId ? [row.replacesSnapshotId] : []))
   const current = snapshots.filter(row => !replaced.has(row.id))
   const approvedClientChargePence = current.length ? current.reduce((total, row) => total + row.clientChargePence, 0) : null
-  const policies = [...project.policies.map(policy => storedPolicy(policy, project.slug)), ...(project.client?.costPolicies ?? []).map(policy => storedPolicy(policy, null))]
+  const policies = [
+    ...project.policies.map(policy => storedPolicy(policy, project.slug)),
+    ...(project.client?.costPolicies ?? []).filter(policy => policy.projectId == null).map(policy => storedPolicy(policy, null)),
+  ]
   const latestImport = accounts.length ? await prisma.costImportRun.findFirst({ where: { OR: accounts }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }) : null
   const allocationEvents: AllocationEvent[] = allocationRows.flatMap(event => {
     const revision = event.revisions[0]
@@ -69,10 +79,14 @@ export async function loadProjectComparison(slug: string, from: string, subscrip
   for (const year of referenceYears(missingFx.map(event => event.occurredAt))) {
     try { referenceQuotes.push(...await fetchReferenceRates(year)) } catch { /* A failed reference year leaves those rows unresolved. */ }
   }
+  const today = asOf.toISOString().slice(0, 10)
+  const resolved = settings.resolve(project.id)
+  const hostingFees = dailyHostingFees(project.id, resolved.rates, resolved.schedule, { from: firstInclusiveUtcDate(from), asOf: today, today })
   const comparison = projectComparison({
-    project: slug, asOf: new Date(), from, events: compared, sourceUpdatedAt: latestImport?.createdAt.toISOString() ?? null,
+    project: slug, asOf, from, events: compared, sourceUpdatedAt: latestImport?.createdAt.toISOString() ?? null,
     storedPolicies: policies, documents, approvedClientChargePence, subscriptionInvoicePence: subscriptionText === null ? null : Number(subscriptionText), allocationEvents,
-    referenceQuotes,
+    referenceQuotes, rates: resolved.rates, hostingFees, hostingSchedule: resolved.schedule,
+    globalRevision: resolved.globalRevision, projectRevision: resolved.revision,
   })
   return { comparison, fx: { storedTableRates: storedRates.length, revisionRates, missingBeforeReference: missingFx.length } }
 }

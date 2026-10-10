@@ -457,6 +457,7 @@ model CostProject {
   expenseAllocations CostExpenseAllocation[]
   mappings  CostProjectMapping[]
   policies  CostPolicy[]
+  calculationSettings CostProjectCalculationSettings?
   events    CostUsageEvent[]
   legacyCharges CostLegacyCharge[]
   chargeSnapshots CostChargeSnapshot[]
@@ -544,6 +545,30 @@ model CostPolicy {
   vercelDailyPence Int @default(0)
   createdAt   DateTime @default(now())
   @@unique([scopeKey, effectiveAt])
+}
+
+// Current calculation rates. One global row (id "global") plus optional per-project overrides.
+// Null project fields inherit the global rate. Zero is an explicit override. Not a dated CostPolicy.
+model CostCalculationSettings {
+  id                      String   @id @default("global")
+  includedPremiumBps      Int      @default(5000)
+  includedGrokComposerBps Int      @default(0)
+  onDemandBps             Int      @default(10000)
+  dailyHostingPence       Int      @default(0)
+  updatedAt               DateTime @updatedAt
+}
+
+model CostProjectCalculationSettings {
+  projectId               String    @id
+  project                 CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  includedPremiumBps      Int?
+  includedGrokComposerBps Int?
+  onDemandBps             Int?
+  dailyHostingPence       Int?
+  hostingEnabled          Boolean   @default(false)
+  hostingStartDate        DateTime? @db.Date
+  hostingEndDate          DateTime? @db.Date
+  updatedAt               DateTime  @updatedAt
 }
 
 model CostUsageEvent {

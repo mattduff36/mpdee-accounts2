@@ -22,12 +22,26 @@ type Daily = {
   providerCashKnown: number
   estimate: bigint
   estimateKnown: number
+  /** True when this day includes a calculated hosting fee. Source counts stay unchanged. */
+  hostingFee: boolean
   included: bigint
   onDemand: bigint
   infrastructure: bigint
 }
 
-export function aggregateCostReport(rows: CostReportRow[]) {
+export type CostReportFee = {
+  date: string
+  projectId: string
+  projectName: string
+  amountPence: number
+}
+
+function hostingUnits(amountPence: number): bigint {
+  if (!Number.isSafeInteger(amountPence) || amountPence < 0) throw new Error('Hosting fee total is not a safe integer')
+  return BigInt(amountPence) * BigInt(100000)
+}
+
+export function aggregateCostReport(rows: CostReportRow[], fees: CostReportFee[] = []) {
   const daily = new Map<string, Daily>()
   const composition = new Map<string, bigint>()
   const chats = new Map<string, { date: string; projectId: string | null; projectName: string; conversationId: string; estimate: bigint; estimateKnown: number; cash: bigint; cashKnown: number; events: number; taskTopics: Set<string> }>()
@@ -38,7 +52,7 @@ export function aggregateCostReport(rows: CostReportRow[]) {
   for (const row of rows) {
     let day = daily.get(row.date)
     if (!day) {
-      day = { date: row.date, events: 0, held: 0, nominal: BigInt(0), nominalKnown: 0, providerCash: BigInt(0), providerCashKnown: 0, estimate: BigInt(0), estimateKnown: 0, included: BigInt(0), onDemand: BigInt(0), infrastructure: BigInt(0) }
+      day = { date: row.date, events: 0, held: 0, nominal: BigInt(0), nominalKnown: 0, providerCash: BigInt(0), providerCashKnown: 0, estimate: BigInt(0), estimateKnown: 0, hostingFee: false, included: BigInt(0), onDemand: BigInt(0), infrastructure: BigInt(0) }
       daily.set(row.date, day)
     }
     day.events++
@@ -64,10 +78,43 @@ export function aggregateCostReport(rows: CostReportRow[]) {
     }
   }
 
+  const hostingDays = new Map<string, { date: string; units: bigint; rows: number }>()
+  const hostingProjects = new Map<string, { projectId: string; projectName: string; units: bigint; rows: number }>()
+  let hostingTotal = BigInt(0)
+  for (const fee of fees) {
+    const units = hostingUnits(fee.amountPence)
+    if (units === BigInt(0)) continue
+    hostingTotal += units
+    estimate += units
+    let day = daily.get(fee.date)
+    if (!day) {
+      day = { date: fee.date, events: 0, held: 0, nominal: BigInt(0), nominalKnown: 0, providerCash: BigInt(0), providerCashKnown: 0, estimate: BigInt(0), estimateKnown: 0, hostingFee: false, included: BigInt(0), onDemand: BigInt(0), infrastructure: BigInt(0) }
+      daily.set(fee.date, day)
+    }
+    day.hostingFee = true
+    day.estimate += units
+    day.infrastructure += units
+    composition.set('Infrastructure', (composition.get('Infrastructure') ?? BigInt(0)) + units)
+    const dayFee = hostingDays.get(fee.date) ?? { date: fee.date, units: BigInt(0), rows: 0 }
+    dayFee.units += units
+    dayFee.rows += 1
+    hostingDays.set(fee.date, dayFee)
+    const projectFee = hostingProjects.get(fee.projectId) ?? { projectId: fee.projectId, projectName: fee.projectName, units: BigInt(0), rows: 0 }
+    projectFee.units += units
+    projectFee.rows += 1
+    projectFee.projectName = fee.projectName
+    hostingProjects.set(fee.projectId, projectFee)
+  }
+
   return {
     daily: Array.from(daily.values()).sort((a, b) => a.date.localeCompare(b.date)),
     composition: Array.from(composition, ([label, value]) => ({ label, value })).sort((a, b) => a.label.localeCompare(b.label)),
     chats: Array.from(chats.values()).filter(chat => chat.estimateKnown > 0 && chat.estimate > BigInt(0)).sort((a, b) => a.date.localeCompare(b.date) || (a.estimate > b.estimate ? -1 : a.estimate < b.estimate ? 1 : a.conversationId.localeCompare(b.conversationId))).map(chat => ({ ...chat, cash: chat.cashKnown ? chat.cash : null, taskTopics: Array.from(chat.taskTopics) })),
     totals: { nominal, nominalKnown, providerCash, providerCashKnown, estimate, estimateKnown, held, events: rows.length },
+    hosting: {
+      units: hostingTotal,
+      days: Array.from(hostingDays.values()).sort((a, b) => a.date.localeCompare(b.date)),
+      projects: Array.from(hostingProjects.values()).sort((a, b) => a.projectName.localeCompare(b.projectName) || a.projectId.localeCompare(b.projectId)),
+    },
   }
 }

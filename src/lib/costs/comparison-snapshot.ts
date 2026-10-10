@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
-import { CHARGE_RULE_VERSION, unitsText } from './money'
+import { type CalculationRates, type HostingSchedule } from './calculation-settings'
+import { type DailyHostingFee } from './daily-hosting'
+import { CHARGE_RULE_VERSION, UNIT, unitsText, type Policy } from './money'
+import { resolvePolicy, type DatedPolicy } from './service'
 import { quoteFor, type FxQuote } from './fx-values'
-import { ALLOCATION_METHOD, COMPARISON_POLICY_VERSION, LEDGER_START, policyInventory, type StoredPolicyRecord } from './comparison-policy'
+import { ALLOCATION_METHOD, COMPARISON_POLICY, COMPARISON_POLICY_VERSION, LEDGER_START, policyInventory, type StoredPolicyRecord } from './comparison-policy'
 import { eventViews, outstandingBalance, type MoneyEvent, type SettlementDocuments } from './four-views'
 import { allocateSubscriptionExpense, type AllocationEvent } from './subscription-allocation'
 
@@ -37,6 +40,35 @@ type Total = {
 }
 const emptyTotal = (): Total => ({ usage: BigInt(0), provider: BigInt(0), charge: BigInt(0), knownUsage: false, knownProvider: false, knownCharge: false, unresolvedUsage: 0, unresolvedProvider: 0, unresolvedCharge: 0, fxEstimate: 0 })
 
+function pricedComparisonPolicy(rates: CalculationRates | undefined, billable = true): Policy {
+  const policy: Policy = rates
+    ? { billable: true, includedBaseBps: COMPARISON_POLICY.includedBaseBps, markupBps: COMPARISON_POLICY.markupBps, infrastructureMarkupBps: COMPARISON_POLICY.infrastructureMarkupBps, rates }
+    : COMPARISON_POLICY
+  return billable ? policy : { ...policy, billable: false }
+}
+
+/** Project slug matches a project policy. A null slug is the client policy (projectId null). Other projects are ignored. */
+function datedStoredPolicies(records: StoredPolicyRecord[], project: string): DatedPolicy[] {
+  const dated: DatedPolicy[] = []
+  for (const record of records) {
+    const projectPolicy = record.projectSlug === project
+    const clientPolicy = record.projectSlug === null
+    if (!projectPolicy && !clientPolicy) continue
+    dated.push({
+      id: record.id,
+      projectId: projectPolicy ? project : null,
+      clientId: clientPolicy ? 'client' : null,
+      effectiveAt: new Date(record.effectiveAt),
+      effectiveUntil: record.effectiveUntil ? new Date(record.effectiveUntil) : null,
+      billable: record.billable,
+      includedBaseBps: record.includedBaseBps,
+      markupBps: record.markupBps,
+      infrastructureMarkupBps: record.infrastructureMarkupBps,
+    })
+  }
+  return dated
+}
+
 /** Project-scoped shadow comparison. Source currencies are totalled separately and are not forced to match another ledger. */
 export function projectComparison(input: {
   project: string
@@ -50,12 +82,23 @@ export function projectComparison(input: {
   subscriptionInvoicePence?: number | null
   allocationEvents?: AllocationEvent[]
   referenceQuotes?: FxQuote[]
+  rates?: CalculationRates
+  hostingFees?: DailyHostingFee[]
+  hostingSchedule?: HostingSchedule
+  globalRevision?: string | null
+  projectRevision?: string | null
 }) {
   const from = input.from ?? LEDGER_START
   if (from < LEDGER_START) throw new Error('Comparison cannot start before the shared ledger boundary')
   if (input.events.length > 50000) throw new Error('Comparison exceeds 50000 events')
   const fromTime = Date.parse(from)
-  const events = input.events.filter(event => event.occurredAt.getTime() >= fromTime).sort((a, b) => a.id.localeCompare(b.id))
+  const asOfTime = input.asOf.getTime()
+  const events = input.events.filter(event => {
+    const time = event.occurredAt.getTime()
+    return time >= fromTime && time <= asOfTime
+  }).sort((a, b) => a.id.localeCompare(b.id))
+  const defaultPolicy = pricedComparisonPolicy(input.rates)
+  const datedPolicies = input.storedPolicies === null ? null : datedStoredPolicies(input.storedPolicies, input.project)
   let held = 0, fxMissing = 0, unassigned = 0, zeroProviderCashIncluded = 0
   let unassignedAndHeld = 0, heldAndFx = 0, unionUnresolved = 0
   const totals = new Map<string, Total>()
@@ -66,7 +109,10 @@ export function projectComparison(input: {
     const estimate = Boolean(reference)
     const fx = storedFx ?? (reference ? { rate: reference.rate, date: reference.date, source: reference.source } : null)
     const fxQuote = fx ? { currency: event.currency, date: fx.date, rate: fx.rate, source: fx.source, estimate } : null
-    const views = eventViews({ ...event, fx })
+    const dated = datedPolicies && event.projectId ? resolvePolicy(datedPolicies, input.project, 'client', event.occurredAt) : null
+    const hold = datedPolicies && event.projectId && !dated ? (event.hold ?? 'No effective charging policy') : event.hold
+    const policy = dated ? pricedComparisonPolicy(input.rates, dated.billable) : defaultPolicy
+    const views = eventViews({ ...event, hold, fx }, policy)
     const rowHeld = Boolean(views.reason && views.clientCharge === null)
     const rowFxMissing = views.clientCharge !== null && views.clientChargePence === null
     const rowUnassigned = event.attribution === 'unassigned' || event.attribution === 'conflict'
@@ -113,6 +159,34 @@ export function projectComparison(input: {
       fx: fxQuote ? [fxQuote] : [],
     }
   })
+  for (const fee of input.hostingFees ?? []) {
+    const units = BigInt(fee.amountPence) * UNIT / BigInt(100)
+    const currency = 'GBP'
+    const total = totals.get(currency) ?? emptyTotal()
+    total.charge += units
+    total.knownCharge = true
+    totals.set(currency, total)
+    const proof = { id: fee.id, chargeRule: CHARGE_RULE_VERSION, rates: input.rates ?? null, configRevision: fee.configRevision, amountPence: fee.amountPence, providerCash: false }
+    lines.push({
+      id: hash([input.project, fee.id]),
+      revision: hash(proof),
+      category: 'VERCEL_HOSTING',
+      funding: 'infrastructure',
+      currency,
+      periodStart: fee.date,
+      periodEnd: fee.date,
+      held: false,
+      provisional: true as const,
+      invoiceability: 'PROVISIONAL' as const,
+      reason: fee.label,
+      events: 0,
+      usageValue: null,
+      providerCost: null,
+      clientCharge: text(units),
+      clientChargePence: penceNumber(BigInt(fee.amountPence)),
+      fx: [],
+    })
+  }
   const outstanding = outstandingBalance({ approvedClientChargePence: input.approvedClientChargePence, documents: input.documents })
   const subscriptionAllocation = input.subscriptionInvoicePence == null
     ? null
@@ -152,5 +226,13 @@ export function projectComparison(input: {
     zeroProviderCashIncluded,
     policyInventory: policyInventory(input.storedPolicies),
   }
-  return { ...body, revision: hash({ project: input.project, chargeRule: CHARGE_RULE_VERSION, lines, coverage, outstanding: body.outstanding, documents: input.documents }) }
+  const revisionProof = { project: input.project, chargeRule: CHARGE_RULE_VERSION, lines, coverage, outstanding: body.outstanding, documents: input.documents }
+  const calculation = input.rates || input.hostingFees ? {
+    rates: input.rates ?? null,
+    globalRevision: input.globalRevision ?? null,
+    projectRevision: input.projectRevision ?? null,
+    hostingSchedule: input.hostingSchedule ?? null,
+    hostingConfigRevisions: Array.from(new Set((input.hostingFees ?? []).map(fee => fee.configRevision))).sort(),
+  } : null
+  return { ...body, revision: hash(calculation ? { ...revisionProof, calculation } : revisionProof) }
 }

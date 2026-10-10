@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { decimalUnits } from './money'
 import { countsAsUnassignedProviderCash } from './charge-eligibility'
-import { currentApprovedTotals, isConfirmedProviderCash, nativeText, outstandingLabel, summariseProjects, totalsByCurrency, type UsageGroup } from './figures'
+import { DEFAULT_CALCULATION_RATES } from './calculation-settings'
+import { currentApprovedTotals, groupSourceUsage, isConfirmedProviderCash, nativeText, outstandingLabel, sourceEligibilityFor, summariseProjects, totalsByCurrency, type UsageGroup } from './figures'
 
 const group = (patch: Partial<UsageGroup>): UsageGroup => ({
   slug: 'itrader', name: 'iTrader', provider: 'cursor', funding: 'included', currency: 'USD', quality: 'complete', assigned: true,
@@ -159,4 +160,66 @@ test('fractional included units are rounded per row before multiplying by count'
   assert.equal(project.provisionalCharge[0].rows, 101)
   assert.notEqual(project.provisionalCharge[0].units, BigInt(758))
   assert.notEqual(project.provisionalCharge[0].units, BigInt(15 * 101))
+})
+
+test('a nonbillable policy is a known zero and a missing policy is held, while source amounts stay', () => {
+  const quiet = summariseProjects([
+    group({ sourceEligibility: 'nonbillable', funding: 'on-demand', nominalUnits: BigInt(10_000_000), providerUnits: BigInt(4_000_000) }),
+  ], [], [])[0]
+  assert.equal(quiet.usage[0].units, BigInt(10_000_000))
+  assert.equal(quiet.confirmedProvider[0].units, BigInt(4_000_000))
+  assert.equal(quiet.provisionalCharge[0].units, BigInt(0))
+  assert.equal(quiet.provisionalCharge[0].rows, 1)
+  assert.equal(quiet.heldRows, 0)
+  const open = summariseProjects([
+    group({ sourceEligibility: 'uncovered', funding: 'on-demand', nominalUnits: BigInt(10_000_000), providerUnits: BigInt(4_000_000) }),
+  ], [], [])[0]
+  assert.equal(open.usage[0].units, BigInt(10_000_000))
+  assert.equal(open.confirmedProvider[0].units, BigInt(4_000_000))
+  assert.equal(open.provisionalCharge.length, 0)
+  assert.equal(open.heldRows, 1)
+})
+
+test('project coverage ends on its last day and the client policy covers the following gap', () => {
+  const rates = { billable: false, includedBaseBps: 6000, markupBps: 1000, infrastructureMarkupBps: 2500 }
+  const policies = [
+    { ...rates, id: 'project', projectId: 'p', clientId: null, effectiveAt: new Date('2026-09-01T00:00:00.000Z'), effectiveUntil: new Date('2026-09-10T00:00:00.000Z') },
+    { ...rates, billable: true, id: 'client', projectId: null, clientId: 'c', effectiveAt: new Date('2026-01-01T00:00:00.000Z'), effectiveUntil: null },
+  ]
+  assert.equal(sourceEligibilityFor(policies, 'p', 'c', new Date('2026-09-10T18:00:00.000Z')), 'nonbillable')
+  assert.equal(sourceEligibilityFor(policies, 'p', 'c', new Date('2026-09-11T00:00:00.000Z')), 'billable')
+  assert.equal(sourceEligibilityFor(policies, 'p', 'c', new Date('2026-08-15T00:00:00.000Z')), 'billable')
+  assert.equal(sourceEligibilityFor([], 'p', 'c', new Date('2026-09-05T00:00:00.000Z')), 'uncovered')
+  assert.equal(sourceEligibilityFor(policies, null, 'c', new Date('2026-09-11T00:00:00.000Z')), undefined)
+})
+
+test('configured rates change the billable charge and a daily fee remains when every source row is held', () => {
+  const rates = new Map([['itrader', { ...DEFAULT_CALCULATION_RATES, includedPremiumBps: 2500 }]])
+  const priced = summariseProjects([
+    group({ sourceEligibility: 'billable', rows: 2, nominalUnits: BigInt(10_000_000) }),
+  ], [], [], { ratesBySlug: rates })[0]
+  assert.equal(priced.provisionalCharge[0].units, BigInt(5_000_000))
+  assert.equal(priced.usage[0].units, BigInt(20_000_000))
+  const held = summariseProjects([
+    group({ sourceEligibility: 'uncovered', funding: 'on-demand', nominalUnits: BigInt(8_000_000), providerUnits: BigInt(8_000_000) }),
+  ], [], [], { hostingFees: [{ slug: 'itrader', name: 'iTrader', amountPence: 38, days: 1 }] })[0]
+  assert.equal(held.heldRows, 1)
+  assert.equal(held.confirmedProvider[0].units, BigInt(8_000_000))
+  assert.equal(held.provisionalCharge[0].currency, 'GBP')
+  assert.equal(held.provisionalCharge[0].units, BigInt(3_800_000))
+  assert.equal(held.provisionalCharge[0].rows, 1)
+})
+
+test('identical source amounts stay per event when eligibility differs', () => {
+  const { rows: _rows, ...base } = group({})
+  const grouped = groupSourceUsage([
+    base,
+    { ...base, sourceEligibility: 'billable' },
+    { ...base, sourceEligibility: 'billable' },
+    { ...base, sourceEligibility: 'nonbillable' },
+  ])
+  assert.equal(grouped.length, 3)
+  assert.equal(grouped.find(item => item.sourceEligibility === 'billable')?.rows, 2)
+  assert.equal(grouped.find(item => item.sourceEligibility === 'billable')?.nominalUnits, BigInt(10_000_000))
+  assert.equal(grouped.find(item => item.sourceEligibility === undefined)?.rows, 1)
 })

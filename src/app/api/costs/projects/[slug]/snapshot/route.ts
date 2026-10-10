@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validProjectReadToken } from '@/lib/costs/project-read-auth'
-import { projectSnapshot } from '@/lib/costs/project-snapshot'
-import { loadProjectSnapshot } from '@/lib/costs/project-snapshot-load'
+import { buildLoadedProjectSnapshot, loadProjectSnapshot } from '@/lib/costs/project-snapshot-load'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'private, no-store' }
@@ -17,6 +16,6 @@ export async function GET(request: NextRequest, context: { params: { slug: strin
     const asOf = new Date()
     const loaded = await loadProjectSnapshot(slug, { from, asOf })
     if (!loaded.ok) return NextResponse.json(loaded.limit ? { error: loaded.error, limit: loaded.limit } : { error: loaded.error }, { status: loaded.status, headers })
-    return NextResponse.json(projectSnapshot(slug, loaded.rows, asOf, loaded.imports, from), { headers })
+    return NextResponse.json(buildLoadedProjectSnapshot(loaded), { headers })
   } catch { return NextResponse.json({ error: 'Project snapshot unavailable' }, { status: 500, headers }) }
 }

@@ -1,8 +1,12 @@
 import { prisma } from '@/lib/db'
+import { loadCalculationSettings } from './calculation-settings-load'
+import { LEDGER_START } from './comparison-policy'
+import { dailyHostingFees } from './daily-hosting'
 import { fetchReferenceRates } from './fx'
 import { quoteFor, referenceYears, type FxQuote } from './fx-values'
 import {
   estimateEvent,
+  firstInclusiveUtcDate,
   presentProvisionalEstimate,
   provisionalComparisonEstimate,
   type ExclusionBucket,
@@ -79,10 +83,13 @@ async function quotesFor(events: { currency: string; occurredAt: string; recorde
 
 /** Latest project rows in the connected database. Infrastructure counts only when that database stores it. */
 export async function loadProjectComparisonEstimate(slug: string): Promise<LoadedComparison | null> {
-  const asOf = new Date().toISOString()
-  const projects = await prisma.$queryRaw<{ slug: string }[]>`SELECT slug FROM "CostProject" WHERE slug = ${slug} AND archived = false`
+  const asOfDate = new Date()
+  const asOf = asOfDate.toISOString()
+  const today = asOf.slice(0, 10)
+  const projects = await prisma.$queryRaw<{ id: string; slug: string }[]>`SELECT id, slug FROM "CostProject" WHERE slug = ${slug} AND archived = false`
   if (!projects.length) return null
-  const [usage, policies, unassigned, infrastructure] = await Promise.all([
+  const project = projects[0]
+  const [usage, policies, unassigned, infrastructure, settings] = await Promise.all([
     prisma.$queryRaw<UsageRow[]>`
       SELECT e.provider, e."accountRef" AS account_ref, e."sourceKey" AS source_key,
         to_char(e."occurredAt", 'YYYY-MM-DD HH24:MI:SS') AS occurred_at,
@@ -95,7 +102,7 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
       JOIN LATERAL (
         SELECT * FROM "CostUsageRevision" WHERE "eventId" = e.id ORDER BY revision DESC LIMIT 1
       ) r ON true
-      WHERE p.slug = ${slug} AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00'`,
+      WHERE p.slug = ${slug} AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00' AND e."occurredAt" <= ${asOfDate}`,
     prisma.$queryRaw<PolicyRow[]>`
       SELECT CASE WHEN pol."projectId" IS NULL THEN 'client' ELSE 'project' END AS scope,
         to_char(pol."effectiveAt", 'YYYY-MM-DD HH24:MI:SS') AS effective_at,
@@ -104,7 +111,7 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
         pol."infrastructureMarkupBps" AS infrastructure_markup_bps, pol."vercelDailyPence" AS vercel_daily_pence
       FROM "CostPolicy" pol
       WHERE pol."projectId" = (SELECT id FROM "CostProject" WHERE slug = ${slug})
-         OR (pol."clientId" IS NOT NULL AND pol."clientId" = (SELECT "clientId" FROM "CostProject" WHERE slug = ${slug}))`,
+         OR (pol."projectId" IS NULL AND pol."clientId" IS NOT NULL AND pol."clientId" = (SELECT "clientId" FROM "CostProject" WHERE slug = ${slug}))`,
     prisma.$queryRaw<GroupRow[]>`
       SELECT r.currency, COUNT(*)::int AS rows,
         COALESCE(SUM(r."nominalUnits"), 0)::text AS nominal_units,
@@ -113,11 +120,12 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
       JOIN LATERAL (
         SELECT currency, "nominalUnits", "providerUnits" FROM "CostUsageRevision" WHERE "eventId" = e.id ORDER BY revision DESC LIMIT 1
       ) r ON true
-      WHERE e."projectId" IS NULL AND e.provider = 'cursor' AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00'
+      WHERE e."projectId" IS NULL AND e.provider = 'cursor' AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00' AND e."occurredAt" <= ${asOfDate}
       GROUP BY r.currency`,
     prisma.$queryRaw<{ rows: number }[]>`
       SELECT COUNT(*)::int AS rows FROM "CostUsageEvent"
-      WHERE provider IN ('vercel', 'supabase', 'manual') AND "occurredAt" >= TIMESTAMP '2026-08-13 23:00:00'`,
+      WHERE provider IN ('vercel', 'supabase', 'manual') AND "occurredAt" >= TIMESTAMP '2026-08-13 23:00:00' AND "occurredAt" <= ${asOfDate}`,
+    loadCalculationSettings(),
   ])
   const events = usage.map(row => estimateEvent({
     provider: row.provider, accountRef: row.account_ref, sourceKey: row.source_key, occurredClock: row.occurred_at,
@@ -142,7 +150,13 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
     includedBaseBps: Number(policy.included_base_bps), markupBps: Number(policy.markup_bps),
     infrastructureMarkupBps: Number(policy.infrastructure_markup_bps), vercelDailyPence: Number(policy.vercel_daily_pence),
   }))
-  const estimate = provisionalComparisonEstimate({ asOf, events, referenceQuotes: quotes, storedPolicies, extraExclusions: [extra] })
+  const resolved = settings.resolve(project.id)
+  const hostingFees = dailyHostingFees(project.id, resolved.rates, resolved.schedule, { from: firstInclusiveUtcDate(LEDGER_START), asOf: today, today })
+  const estimate = provisionalComparisonEstimate({
+    asOf, events: events.filter(event => event.occurredAt <= asOf), referenceQuotes: quotes, storedPolicies, extraExclusions: [extra],
+    rates: resolved.rates, hostingFees, hostingSchedule: resolved.schedule,
+    globalRevision: resolved.globalRevision, projectRevision: resolved.revision,
+  })
   const infrastructureRowsInDatabase = Number(infrastructure[0]?.rows ?? 0)
   return { estimate, presentation: presentProvisionalEstimate(estimate, { infrastructureRowsInDatabase }), infrastructureRowsInDatabase }
 }

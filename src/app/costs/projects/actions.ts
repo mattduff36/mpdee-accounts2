@@ -89,7 +89,7 @@ export async function savePolicyRange(raw: unknown): Promise<SaveResult> {
       return { from: after.from }
     })
     revalidatePath('/costs', 'layout')
-    return { ok: true, message: `Saved the rate from ${result.from}. Dates and the chargeable flag were saved. Current estimates use the global rule on chargeable covered dates. Issued invoices and frozen legacy charges are unchanged.` }
+    return { ok: true, message: `Saved chargeable dates from ${result.from}. Usage estimates follow the saved project calculation settings on those dates. Issued invoices and frozen legacy charges are unchanged.` }
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
     const safe = ['Choose', 'Included base', 'Percentage'].some(prefix => message.startsWith(prefix))
@@ -115,10 +115,10 @@ export async function deletePolicyRange(raw: unknown): Promise<SaveResult> {
       return { from: before.from }
     })
     revalidatePath('/costs', 'layout')
-    return { ok: true, message: `Deleted the rate from ${result.from}. Estimates use the remaining dates. Issued invoices and frozen legacy charges are unchanged.` }
+    return { ok: true, message: `Deleted chargeable dates from ${result.from}. Usage estimates use the remaining date ranges. Issued invoices and frozen legacy charges are unchanged.` }
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
-    return { ok: false, message: message.startsWith('Choose') ? message : 'Nothing was deleted. Reload the rates and try again.' }
+    return { ok: false, message: message.startsWith('Choose') ? message : 'Nothing was deleted. Reload the chargeable dates and try again.' }
   }
 }
 export async function setupProjects(kind: 'known'|'discovered'): Promise<SaveResult> {
@@ -160,6 +160,6 @@ export async function createProject(name:string,slug:string):Promise<SaveResult>
   if(!name.trim() || name.length>120 || !/^[a-z0-9-]{1,80}$/.test(slug)) return {ok:false,message:'Enter a name and a unique lowercase slug using letters, numbers and hyphens.'}
   try {
     await costTransaction(async tx=>{const p=await tx.costProject.create({data:{name:name.trim(),slug}});await tx.auditLog.create({data:{userId:actor.id,action:'costs.project.create',entityType:'CostProject',entityId:p.id,details:JSON.stringify({name,slug})}})})
-    revalidatePath('/costs','layout');return {ok:true,message:'Project created. Link its client, rates and sources in the matrix.'}
+    revalidatePath('/costs','layout');return {ok:true,message:'Project created. Link its client and sources, then set calculation rates and chargeable dates.'}
   } catch {return {ok:false,message:'Project could not be created. Check that the slug is unique.'}}
 }

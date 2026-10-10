@@ -46,8 +46,8 @@ test('an unresolved provider bill stays outside the ledger bill count', () => {
   assert.match(coverage?.description ?? '', /provider-bill/)
   assert.match(coverage?.description ?? '', /2026-08-12/)
   assert.match(coverage?.description ?? '', /service period is still required/)
-  assert.match(coverage?.description ?? '', /not an iTrader charge/)
-  assert.equal(coverage?.amountText, 'Not an iTrader charge')
+  assert.match(coverage?.description ?? '', /remains outside client estimates/)
+  assert.equal(coverage?.amountText, 'Not allocated to client costs')
   assert.match(coverage?.title ?? '', /Historical provider bills/)
   assert.equal(coverage?.effectOnTotals.includes('Omitted from the ledger bill total'), true)
   const many = liveIssueDrafts(summary({
@@ -57,9 +57,10 @@ test('an unresolved provider bill stays outside the ledger bill count', () => {
     ],
   }))
   const crowded = many.find(issue => issue.id === 'unresolved-bill-coverage')
-  assert.match(crowded?.description ?? '', /CH4KCVQF-0040/)
-  assert.equal(crowded?.description.includes('BILL-0'), false)
-  assert.equal(crowded?.amountText, 'Not an iTrader charge')
+  assert.match(crowded?.description ?? '', /BILL-0/)
+  assert.equal(crowded?.description.includes('CH4KCVQF-0040'), false)
+  assert.equal(crowded?.description.includes('BILL-3'), false)
+  assert.equal(crowded?.amountText, 'Not allocated to client costs')
   assert.equal(issues.find(issue => issue.id === 'provider-bills')?.description.startsWith('2 provider'), true)
 })
 

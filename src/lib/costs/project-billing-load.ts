@@ -1,8 +1,7 @@
 import { prisma } from '@/lib/db'
 import { LEDGER_START } from './comparison-policy'
 import { buildProjectBilling, type BillingInvoice, type BillingLink, type ProjectBillingEnvelope, type BillingReportDocument } from './project-billing'
-import { projectSnapshot } from './project-snapshot'
-import { chargeableBillingRows, loadProjectSnapshot, type SnapshotLoadDeps } from './project-snapshot-load'
+import { buildLoadedProjectSnapshot, chargeableBillingRows, loadProjectSnapshot, type SnapshotLoadDeps } from './project-snapshot-load'
 
 const invoiceSelect = {
   id: true,
@@ -63,9 +62,9 @@ export async function loadProjectInvoiceGraph(project: { id: string; clientId: s
 
 export async function loadProjectBilling(slug: string, asOf = new Date(), deps: SnapshotLoadDeps & { db?: BillingDb } = {}): Promise<ProjectBillingLoad> {
   const db = (deps.db ?? prisma) as BillingDb
-  const loaded = await loadProjectSnapshot(slug, { from: LEDGER_START, asOf }, { ...deps, db })
+  const loaded = await loadProjectSnapshot(slug, { from: LEDGER_START, asOf }, deps)
   if (!loaded.ok) return { status: loaded.status, body: loaded.limit ? { error: loaded.error, limit: loaded.limit } : { error: loaded.error }, report: null }
-  const snapshot = projectSnapshot(loaded.project.slug, chargeableBillingRows(loaded.rows), asOf, loaded.imports, LEDGER_START)
+  const snapshot = buildLoadedProjectSnapshot({ ...loaded, rows: chargeableBillingRows(loaded.rows) })
   const graph = await loadProjectInvoiceGraph(loaded.project, db)
   const billing = buildProjectBilling({
     projectSlug: loaded.project.slug,
