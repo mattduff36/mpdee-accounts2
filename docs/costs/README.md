@@ -1,5 +1,16 @@
 # Multi-project cost ledger
 
+## Current costing and project billing (10 October 2026)
+
+The universal charge rule is mpdee-global-client-charge-v1. Included premium models use 50% of nominal value; included Grok/Composer families use 0%; all on-demand models use 100% of recorded provider cash; infrastructure uses recorded charges at face value. Non-billable projects remain non-billable. Stored legacy markup percentages do not alter this rule. Synthetic daily membership and usage explicitly covered by a provider invoice are excluded from current charge views.
+
+Reports → Business & Project Analysis includes Project costs and invoicing for every active project. Whole issued invoice totals exclude recorded VAT; issued credit notes reduce invoicing on their issue dates. Payments do not change this comparison. Remaining to invoice = recorded costs minus net invoiced. Negative values and unknown costs remain visible; this is neither unpaid-invoice debt nor a refund calculation. Invoice history before the cost ledger is included. Existing expense/service-period analysis and approved snapshots remain separate.
+
+GET /api/costs/projects/[slug]/billing returns one project-scoped, no-store mpdee-project-billing-v1 response with the v2 cost snapshot, integer-pence totals, coverage and dense daily history. Project-only invoice links use invoice-project mappings without inventing service dates. Authenticated write guards, conflict checks and audit records protect changes. Whole-invoice allocation is v1; service and cost-recovery splits are deferred.
+
+The reviewed native hosting adapter is documented in [iTrader FOCUS import](../costs-itrader-focus-import.md). It is a manual import path, not a continuous infrastructure collector. The new iTrader billing reader is being validated locally; its production cutover remains a separate staging-first release.
+
+
 The ledger is live on `main` at https://accounts.mpdee.info. On 28 September 2026, the owner approved retiring preview: its branch and `neon-mpdeea-2-dev` database were deleted after backups, data reconciliation and authenticated production checks. Production uses `neon-mpdeea-2`. Do not reuse old preview credentials or attempt to run against the retired database.
 
 The cost module remains a review ledger: it does not automatically create accounting expenses or invoices. Reviewed historical expenses were imported separately with source notes. iTrader’s existing writer remains active until its own historical reconciliation and cutover.
@@ -12,8 +23,8 @@ The cost module remains a review ledger: it does not automatically create accoun
 - `/costs/import`: authenticated JSON import. `/api/costs/ingest` also accepts a dedicated bearer token. `/api/costs/export` produces a review JSON export.
 - Event identity is shared across branches and independent of the branch performing the import. Monetary corrections append revisions. Reimports do not append duplicate events. Database transaction locks serialise writers.
 - Source money uses integer 1/10,000,000 currency units. Existing Accounts documents remain integer GBP pence. Native currencies are never summed together.
-- Included Cursor: nominal value × (included base percentage + markup percentage). On-demand: precise provider billed cost × (100% + markup). Infrastructure: billed amount × (100% + infrastructure markup). These are percentage points, not markup on a discounted base.
-- Initial known-project setup gives iTrader 50% + 10% = 60% included and 110% on-demand, with infrastructure at face value. MPDEE Accounts is internal/non-billable. Initial policy date is 1 August 2026. Existing entries are not overwritten by repeating setup.
+- Current estimates use the universal 50%/0%/100% rule above without extra markup. Source value, provider cash and client charge remain distinct.
+- MPDEE Accounts is internal/non-billable. Effective project/client billability still applies. Historical policy percentages remain as records; repeating setup does not rewrite existing entries.
 - All scopes without a policy are held, rather than assuming a client fee. Client defaults apply only where no effective project override exists.
 
 ## Operating the live ledger
@@ -69,7 +80,7 @@ For infrastructure choose provider `vercel`, `supabase` or `manual`. Each event 
 
 - All data here is provisional. No invoice creation or automatic accounting expense creation is implemented.
 - Database revisions preserve source cost history. Current estimates are recalculated with the chosen client link and policy, so changing a historical policy date or client link can change estimates. Freeze approved charges and policy/FX snapshots before adding invoicing.
-- No live Vercel/Supabase billing API connector or automatic infrastructure reconciliation is enabled. Import reviewed billing records in the documented format first. Port iTrader's existing daily membership allocation only after reconciling historical imports so it is not duplicated.
+- No live Vercel/Supabase billing API connector or automatic infrastructure reconciliation is enabled. Import reviewed billing records in the documented format first. Do not restore iTrader's synthetic daily membership allocation. Use the documented native FOCUS import for reviewed hosting records.
 - No automatic allowance balance or exhaustion alert yet. Account-wide funding labels show actual on-demand usage. Credit pools and renewal dates need a verified provider observation before a balance/alert can be accurate.
 - The undocumented Cursor endpoint can change. Keep export reconciliation and a manual import route. A CSV can verify totals but cannot safely supply conversation/project identity on its own. Daily aggregated legacy logs are not an event-level backfill.
 - Collision records stay held after smaller overlapping imports. Resolve against provider evidence before billing. Imported source records are retained rather than deleted if an event disappears from a later response.
@@ -78,19 +89,19 @@ For infrastructure choose provider `vercel`, `supabase` or `manual`. Each event 
 
 ## Verification performed in the implementation workspace
 
-TypeScript checks and cost unit tests cover precise cents, 60%/110% charging, infrastructure credits, unknown funding/fees, identity collisions, correction identity, token authentication, field sanitization and effective-date precedence. The full existing test suite is also run. The production build compiles without a connected database, but existing reporting pages log missing DATABASE_URL while collecting page data. The development database copy, migrations, authenticated HTTP page checks, real import/replay and real PostgreSQL correction checks are recorded in `preview-verification.md`. The production cutover also verified authenticated pages, duplicate-safe ingestion and a successful production scheduled collection run.
+TypeScript checks and cost unit tests cover precise cents, the current 50%/0%/100% charging rule, infrastructure credits, unknown funding/fees, identity collisions, correction identity, token authentication, field sanitization and effective-date precedence. The full existing test suite is also run. The production build compiles without a connected database, but existing reporting pages log missing DATABASE_URL while collecting page data. The development database copy, migrations, authenticated HTTP page checks, real import/replay and real PostgreSQL correction checks are recorded in `preview-verification.md`. The production cutover also verified authenticated pages, duplicate-safe ingestion and a successful production scheduled collection run.
 
 ## Installing the local schedule
 
 Run `scripts/costs/install-task.ps1` locally to install an hourly/logon collection-only snapshot. It refuses to overwrite an existing task. With packaged Windows apps, pass `-StorageBase` pointing to the verified physical local-cache directory if AppData is redirected; Task Scheduler cannot use the package-virtual path. The configuration and status are in `mpdee-accounts/costs-automation` below that storage base. The runner sets the same storage base for its outbox and never inherits upload credentials or destination accidentally. Updating repository collector code does not update the installed snapshot: validate and copy the collector modules deliberately, then verify a scheduled run. Keep the saved local files during updates. Upload activation remains separate from installation.
 
-See `project-read-api.md` for the implemented, locally verified project-scoped read API; hosted activation and the iTrader reader switch remain pending.
+See `project-read-api.md` for the project-scoped read API. Hosted read access is active; the new iTrader billing reader is validated locally before its separate staging-first release.
 
 ## Shadow comparison
 
 `GET /api/costs/projects/{slug}/comparison` returns `mpdee-project-cost-comparison-v1` for events on or after `2026-08-13T23:00:00.000Z`. It is a read-only shadow. iTrader remains the authoritative writer, and `authoritativeWriter` is `itrader`.
 
-The comparison policy `mpdee-comparison-policy-v1` prices included Cursor at 50% of nominal value, on-demand at 100% of provider cash, and infrastructure at face value. The fixed £0.38/day Vercel allocation is off. This policy is not written into `CostPolicy`. Code defaults still have `markupBps` 0, while known-project setup can still seed iTrader with `markupBps` 1000 and `vercelDailyPence` 38 when that row is absent. The response records which of those layers were read. An unread database is reported as unread; it is not treated as the comparison policy.
+The comparison response retains its historical contract name while using the current universal charge rule above, including 0% for included Grok/Composer. The fixed £0.38/day Vercel allocation is off. Stored legacy percentages are not applied to current charges. An unread database is reported as unread, not as a zero cost.
 
 Usage value, provider cost, client charge and outstanding balance are separate. Included events with zero provider cash stay visible and are not treated as a free subscription. Subscription invoices use `mpdee-subscription-allocation-v1`: included nominal value is the weight, on-demand cash is not, unassigned usage stays in the denominator, and unallocated overhead is named. A provider invoice and its underlying usage are not both expenses. Customer payments, customer credits, VAT and prepaid balances stay in `documents`. Outstanding uses approved charge snapshots only.
 
@@ -100,7 +111,7 @@ Usage value, provider cost, client charge and outstanding balance are separate. 
 
 The approved experience update is tracked in experience-improvements.md. Costs pages share persistent navigation. Projects use a single atomic-save matrix with verified local identity suggestions and dated rate history. Review groups conversations and shows rule-based evidence scores, never statistical probabilities or automatic assignments.
 
-/costs/analysis uses existing GBP net Expenses as its single cost source. Invoice project/service-period associations and expense shares are explicitly reviewed. Subscription shares can be proposed from included nominal usage, but incomplete coverage remains provisional; unassigned shares remain unallocated. Overlapping invoice periods split daily costs by original net invoice value and preserve incurred costs after credit notes. Multi-project invoice splitting is not yet supported.
+The original business and service-period sections of /costs/analysis use existing GBP net Expenses as their cost source. The new Project costs and invoicing section uses the shared project billing response described above. Invoice project/service-period associations and expense shares are explicitly reviewed. Subscription shares can be proposed from included nominal usage, but incomplete coverage remains provisional; unassigned shares remain unallocated. Overlapping invoice periods split daily costs by original net invoice value and preserve incurred costs after credit notes. Multi-project invoice splitting is not yet supported.
 
 ECB reference estimates use each event date or a preceding published working day (maximum seven days), with imported rates taking precedence. Administrators can retain those dated references for repeatable estimates. These are not actual bank settlement rates. Missing values remain unavailable. No invoice or original expense is automatically created or altered by this analysis.
 

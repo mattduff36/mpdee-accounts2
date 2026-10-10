@@ -54,6 +54,42 @@ test('infrastructure needs stable IDs and keeps credits negative', () => {
   assert.throws(()=>normalize(importSchema.parse({provider:'vercel',accountRef:'team-test',events:[{timestamp:raw.timestamp,billedAmount:'1'}]})))
   const [event] = normalize(importSchema.parse({provider:'vercel',accountRef:'team-test',quality:'complete',events:[{timestamp:raw.timestamp,sourceId:'invoice-line-1',billedAmount:'-1.25',currency:'GBP'}]}))
   assert.equal(event.cash,decimalUnits('-1.25')); assert.equal(event.fxGbp,'1')
+  assert.equal(event.sourceKey,'invoice-line-1:0')
+})
+
+test('infrastructure replay keeps sourceId:0 and checksum, and coverage changes the checksum', () => {
+  const event = { timestamp: raw.timestamp, sourceId: 'invoice-line-1', billedAmount: '1.25', currency: 'GBP' as const }
+  const payload = { provider: 'vercel' as const, accountRef: 'team-test', quality: 'complete' as const, events: [event] }
+  const [first] = normalize(importSchema.parse(payload))
+  const [replay] = normalize(importSchema.parse(payload))
+  assert.equal(first.sourceKey, 'invoice-line-1:0')
+  assert.equal(replay.sourceKey, first.sourceKey)
+  assert.equal(replay.checksum, first.checksum)
+  const [covered] = normalize(importSchema.parse({ ...payload, events: [{ ...event, coveredByProviderInvoice: true }] }))
+  assert.equal(covered.sourceKey, first.sourceKey)
+  assert.equal(covered.evidence.coveredByProviderInvoice, true)
+  assert.notEqual(covered.checksum, first.checksum)
+  const [explicitFalse] = normalize(importSchema.parse({ ...payload, events: [{ ...event, coveredByProviderInvoice: false }] }))
+  assert.notEqual(explicitFalse.checksum, first.checksum)
+})
+
+test('duplicate infrastructure sourceId and membership fail, while the same resource on another day does not', () => {
+  const line = (sourceId: string, billedAmount: string, timestamp: string) => ({ timestamp, sourceId, billedAmount, currency: 'USD' as const, resourceRef: 'db_1' })
+  assert.throws(() => normalize(importSchema.parse({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [line('focus-1', '1.00', '2026-09-01T00:00:00.000Z'), line('focus-1', '2.00', '2026-09-02T00:00:00.000Z')] })), /Repeated infrastructure sourceId/)
+  assert.throws(() => normalize(importSchema.parse({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [{ timestamp: raw.timestamp, sourceId: 'vercel:membership:2026-09-01', billedAmount: '0.38', currency: 'GBP' }] })), /membership sourceId/)
+  const rows = normalize(importSchema.parse({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [line('vercel:db:2026-09-01', '1.00', '2026-09-01T00:00:00.000Z'), line('vercel:db:2026-10-01', '2.00', '2026-10-01T00:00:00.000Z')] }))
+  assert.deepEqual(rows.map(row => row.sourceKey), ['vercel:db:2026-09-01:0', 'vercel:db:2026-10-01:0'])
+  assert.deepEqual(rows.map(row => row.resourceRef), ['db_1', 'db_1'])
+})
+
+test('legacy numeric billed amounts stay accepted and decimal strings keep 1e-7 precision past the JS safe integer', () => {
+  const [numeric] = normalize(importSchema.parse({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [{ timestamp: raw.timestamp, sourceId: 'numeric-line', billedAmount: 1.5, currency: 'USD' }] }))
+  assert.equal(numeric.cash, decimalUnits(1.5))
+  const precise = '900719925.4740993'
+  const [text] = normalize(importSchema.parse({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [{ timestamp: raw.timestamp, sourceId: 'precise-line', billedAmount: precise, currency: 'USD' }] }))
+  assert.equal(text.cash, decimalUnits(precise))
+  assert.equal(text.cash > BigInt(Number.MAX_SAFE_INTEGER), true)
+  assert.notEqual(text.cash, BigInt(Math.round(Number(precise) * 10_000_000)))
 })
 test('write token fails closed when missing, short or mismatched', () => {
   const secret='a'.repeat(40)

@@ -58,5 +58,36 @@ test('import replay, correction, enrichment, manual attribution and collision ho
     assert.equal(r.revised,1)
     assert.deepEqual(revisions.filter(r=>r.eventId===contextRecord.id).at(-1).evidence.taskContext,context)
 
+    // A legacy outbox cannot erase reviewed invoice coverage and make evidence billable again.
+    const infra = { timestamp:'2026-09-01T00:00:00.000Z', sourceId:'coverage-proof', billedAmount:'2.00', currency:'GBP' }
+    const infraPayload = { provider:'vercel', accountRef:'coverage-account', quality:'complete' }
+    await importUsage({...infraPayload,events:[{...infra,coveredByProviderInvoice:true}]})
+    const coveredRecord=events.find(e=>e.sourceKey==='coverage-proof:0')
+    const coverageRevisionCount=revisions.filter(r=>r.eventId===coveredRecord.id).length
+    r=await importUsage({...infraPayload,events:[infra]})
+    assert.equal(r.duplicate,1,'omitted coverage retains the prior reviewed value')
+    assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).length,coverageRevisionCount)
+    assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).at(-1).evidence.coveredByProviderInvoice,true)
+    r=await importUsage({...infraPayload,events:[{...infra,coveredByProviderInvoice:false}]})
+    assert.equal(r.revised,1,'an explicit false is a reviewable correction')
+    assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).at(-1).evidence.coveredByProviderInvoice,false)
+    r=await importUsage({...infraPayload,events:[{...infra,taskContext:context}]})
+    assert.equal(r.revised,1,'new context may enrich without losing invoice coverage')
+    assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).at(-1).evidence.coveredByProviderInvoice,false)
+
   } finally { prisma.$transaction=original }
+})
+
+test('duplicate infrastructure sourceId and membership fail before any persistence', async () => {
+  const writes: string[] = []
+  let entered = 0
+  const original = prisma.$transaction
+  ;(prisma as any).$transaction = async (fn: any) => { entered++; return fn({ costUsageEvent: { createMany: async () => { writes.push('event') } }, costUsageRevision: { createMany: async () => { writes.push('revision') } } }) }
+  const line = { timestamp: '2026-09-01T00:00:00.000Z', sourceId: 'line-1', billedAmount: '1.00', currency: 'USD' }
+  try {
+    await assert.rejects(() => importUsage({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [line, { ...line, timestamp: '2026-09-02T00:00:00.000Z', billedAmount: '2.00' }] }), /Repeated infrastructure sourceId/)
+    await assert.rejects(() => importUsage({ provider: 'vercel', accountRef: 'team-test', quality: 'complete', events: [{ timestamp: '2026-09-01T00:00:00.000Z', sourceId: 'vercel:membership:2026-09-01', billedAmount: '0.38', currency: 'GBP' }] }), /membership sourceId/)
+    assert.equal(entered, 0)
+    assert.deepEqual(writes, [])
+  } finally { prisma.$transaction = original }
 })

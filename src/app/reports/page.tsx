@@ -4,7 +4,7 @@ import Link from "next/link"
 import { TrendingUp, BarChart3, PieChart, AlertTriangle, FileText, Users } from "lucide-react"
 
 const reports = [
-  { href: "/costs/analysis", title: "Business & Project Analysis", description: "Project cost allocation, invoice margins and business trends", icon: TrendingUp },
+  { href: "/costs/analysis#project-billing", title: "Business & Project Analysis", description: "Project costs versus invoiced amounts, invoice links and business trends", icon: TrendingUp },
   { href: "/reports/profit-loss", title: "Collections & Spending", description: "Recorded customer collections compared with dated expenses", icon: TrendingUp },
   { href: "/reports/sales", title: "Sales & Collections", description: "Monthly invoicing, receipt-date collections and current balances", icon: BarChart3 },
   { href: "/reports/expenses", title: "Expenses by Category", description: "Breakdown of spending by category", icon: PieChart },

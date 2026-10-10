@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { decimalUnits } from './money'
+import { countsAsUnassignedProviderCash } from './charge-eligibility'
 import { currentApprovedTotals, isConfirmedProviderCash, nativeText, outstandingLabel, summariseProjects, totalsByCurrency, type UsageGroup } from './figures'
 
 const group = (patch: Partial<UsageGroup>): UsageGroup => ({
   slug: 'itrader', name: 'iTrader', provider: 'cursor', funding: 'included', currency: 'USD', quality: 'complete', assigned: true,
-  model: 'claude-4.6-sonnet', rows: 1, nominalUnits: BigInt(10_000_000), providerUnits: BigInt(0), ...patch,
+  model: 'claude-4.6-sonnet', sourceKey: 'usage:0', coveredByProviderInvoice: false, rows: 1, nominalUnits: BigInt(10_000_000), providerUnits: BigInt(0), ...patch,
 })
 
 test('assigned usage excludes unassigned rows and keeps unknown funding out of free credit', () => {
@@ -121,6 +123,32 @@ test('mixed source currencies and missing infrastructure cash stay unmerged', ()
   assert.equal(totals[1].units, BigInt(50))
   assert.equal(totals[1].rows, 1)
   assert.equal(totals[1].missing, 4)
+})
+
+test('partial or review cash, membership and invoice-covered evidence are not confirmed cash or client charges', () => {
+  const credit = decimalUnits('-1.25')
+  const projects = summariseProjects([
+    group({ provider: 'vercel', funding: 'infrastructure', model: null, currency: 'GBP', nominalUnits: null, providerUnits: credit, sourceKey: 'invoice-line-1:0' }),
+    group({ provider: 'vercel', funding: 'infrastructure', model: null, currency: 'GBP', nominalUnits: null, providerUnits: decimalUnits('0.38'), sourceKey: 'vercel:membership:2026-09-01:0' }),
+    group({ funding: 'on-demand', quality: 'partial', nominalUnits: BigInt(4_000_000), providerUnits: BigInt(4_000_000), sourceKey: 'partial:0' }),
+    group({ funding: 'on-demand', quality: 'review', nominalUnits: BigInt(6_000_000), providerUnits: BigInt(6_000_000), sourceKey: 'review:0' }),
+    group({ funding: 'on-demand', coveredByProviderInvoice: true, nominalUnits: BigInt(8_000_000), providerUnits: BigInt(8_000_000), sourceKey: 'covered:0' }),
+    group({ slug: 'unassigned', name: 'Unassigned', assigned: false, provider: 'vercel', funding: 'infrastructure', model: null, nominalUnits: null, providerUnits: BigInt(3_000_000), sourceKey: 'focus-real:0' }),
+  ], [], [])
+  const itrader = projects.find(project => project.slug === 'itrader')
+  const unassigned = projects.find(project => project.slug === 'unassigned')
+  assert.equal(itrader?.confirmedProvider.find(total => total.currency === 'GBP')?.units, credit)
+  assert.equal(itrader?.provisionalCharge.find(total => total.currency === 'GBP')?.units, credit)
+  assert.equal(itrader?.confirmedProvider.some(total => total.currency === 'USD'), false)
+  assert.equal(itrader?.provisionalCharge.some(total => total.currency === 'USD'), false)
+  assert.equal(itrader?.heldRows, 2)
+  assert.equal(unassigned?.confirmedProvider[0].units, BigInt(3_000_000))
+  assert.equal(unassigned?.provisionalCharge.length, 0)
+  assert.equal(countsAsUnassignedProviderCash(group({ slug: 'unassigned', name: 'Unassigned', assigned: false, provider: 'vercel', funding: 'infrastructure', model: null, nominalUnits: null, providerUnits: BigInt(3_000_000), sourceKey: 'focus-real:0' })), true)
+  assert.equal(countsAsUnassignedProviderCash(group({ assigned: false, provider: 'vercel', funding: 'infrastructure', model: null, sourceKey: 'vercel:membership:2026-09-01:0' })), false)
+  assert.equal(countsAsUnassignedProviderCash(group({ assigned: false, provider: 'vercel', funding: 'infrastructure', model: null, coveredByProviderInvoice: true, sourceKey: 'focus-covered:0' })), false)
+  assert.equal(isConfirmedProviderCash('cursor', 'on-demand'), true)
+  assert.equal(isConfirmedProviderCash('vercel', 'infrastructure'), true)
 })
 
 test('fractional included units are rounded per row before multiplying by count', () => {

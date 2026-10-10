@@ -1,5 +1,8 @@
+import { excludedFromClientAndConfirmedCash, isFreeCredit, showsConfirmedProviderCash } from './charge-eligibility'
 import { COMPARISON_POLICY } from './comparison-policy'
 import { chargeUnits, unitsText } from './money'
+
+export { isConfirmedProviderCash, isFreeCredit } from './charge-eligibility'
 
 export type UsageGroup = {
   slug: string
@@ -10,6 +13,8 @@ export type UsageGroup = {
   quality: string
   assigned: boolean
   model: string | null
+  sourceKey: string
+  coveredByProviderInvoice: boolean
   rows: number
   /** Per-event nominal. Null stays unknown and is never treated as zero. */
   nominalUnits: bigint | null
@@ -48,15 +53,6 @@ export type CostSummary = {
 }
 
 const empty = (currency: string): MoneyTotal => ({ currency, units: BigInt(0), rows: 0, missing: 0 })
-
-export function isFreeCredit(funding: string) {
-  return funding === 'free-credit'
-}
-
-export function isConfirmedProviderCash(provider: string, funding: string) {
-  if (isFreeCredit(funding) || funding === 'included' || funding === 'unknown') return false
-  return (provider === 'cursor' && funding === 'on-demand') || funding === 'infrastructure'
-}
 
 function add(list: MoneyTotal[], currency: string, units: bigint, rows: number, missing = 0) {
   const current = list.find(item => item.currency === currency) ?? empty(currency)
@@ -115,8 +111,8 @@ export function summariseProjects(groups: UsageGroup[], snapshots: { slug: strin
     const row = figure(group)
     if (group.provider === 'cursor') addAmount(row.usage, group.currency, group.nominalUnits, group.rows)
     if (isFreeCredit(group.funding)) addAmount(row.freeCredit, group.currency, group.providerUnits, group.rows)
-    else if (isConfirmedProviderCash(group.provider, group.funding)) addAmount(row.confirmedProvider, group.currency, group.providerUnits, group.rows)
-    if (isFreeCredit(group.funding)) continue
+    else if (showsConfirmedProviderCash(group)) addAmount(row.confirmedProvider, group.currency, group.providerUnits, group.rows)
+    if (isFreeCredit(group.funding) || excludedFromClientAndConfirmedCash(group)) continue
     const perEvent = group.assigned && group.quality === 'complete'
       ? chargeUnits({ provider: group.provider, funding: group.funding, nominal: group.nominalUnits, cash: group.providerUnits, model: group.model }, COMPARISON_POLICY)
       : null

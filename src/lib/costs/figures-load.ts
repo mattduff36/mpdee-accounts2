@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { sourceDateFromNotes } from './bill-coverage'
+import { countsAsUnassignedProviderCash } from './charge-eligibility'
 import { LEDGER_START } from './comparison-policy'
 import { currentApprovedTotals, summariseProjects, totalsByCurrency, type CostSummary, type UsageGroup } from './figures'
 
@@ -12,6 +13,8 @@ type GroupRow = {
   quality: string
   assigned: boolean
   model: string | null
+  sourceKey: string
+  coveredByProviderInvoice: boolean
   rows: number
   nominal_units: string | null
   provider_units: string | null
@@ -24,13 +27,16 @@ export async function loadCostFigures(): Promise<CostSummary> {
     prisma.$queryRaw<GroupRow[]>`
       SELECT COALESCE(p.slug, 'unassigned') AS slug, COALESCE(p.name, 'Unassigned') AS name,
         e.provider, r.funding, r.currency, r.quality, (e."projectId" IS NOT NULL) AS assigned,
-        e.model AS model, COUNT(*)::int AS rows,
+        e.model AS model, e."sourceKey" AS "sourceKey",
+        (r.evidence->>'coveredByProviderInvoice' = 'true') AS "coveredByProviderInvoice",
+        COUNT(*)::int AS rows,
         r."nominalUnits"::text AS nominal_units, r."providerUnits"::text AS provider_units
       FROM "CostUsageEvent" e
       LEFT JOIN "CostProject" p ON p.id = e."projectId"
       JOIN LATERAL (SELECT * FROM "CostUsageRevision" WHERE "eventId" = e.id ORDER BY revision DESC LIMIT 1) r ON true
       WHERE e."occurredAt" >= ${start}
-      GROUP BY p.slug, p.name, e.provider, r.funding, r.currency, r.quality, e."projectId", e.model, r."nominalUnits", r."providerUnits"`,
+      GROUP BY p.slug, p.name, e.provider, r.funding, r.currency, r.quality, e."projectId", e.model, e."sourceKey",
+        (r.evidence->>'coveredByProviderInvoice' = 'true'), r."nominalUnits", r."providerUnits"`,
     prisma.costChargeSnapshot.findMany({
       where: { verificationStatus: 'approved' },
       select: { id: true, projectId: true, replacesSnapshotId: true, clientChargePence: true },
@@ -52,7 +58,9 @@ export async function loadCostFigures(): Promise<CostSummary> {
   ])
   const usage: UsageGroup[] = groups.map(group => ({
     slug: group.slug, name: group.name, provider: group.provider, funding: group.funding, currency: group.currency, quality: group.quality,
-    assigned: Boolean(group.assigned), model: group.model, rows: Number(group.rows),
+    assigned: Boolean(group.assigned), model: group.model, sourceKey: group.sourceKey,
+    coveredByProviderInvoice: group.coveredByProviderInvoice === true,
+    rows: Number(group.rows),
     nominalUnits: group.nominal_units === null ? null : BigInt(group.nominal_units),
     providerUnits: group.provider_units === null ? null : BigInt(group.provider_units),
   }))
@@ -62,7 +70,7 @@ export async function loadCostFigures(): Promise<CostSummary> {
     const slug = slugById.get(row.projectId)
     return slug ? [{ slug, approvedPence: row.approvedPence }] : []
   }), expenses.flatMap(expense => expense.costAllocations.flatMap(share => share.project ? [{ slug: share.project.slug, pence: share.amountPence }] : [])))
-  const infraGroups = usage.filter(group => !group.assigned && group.funding === 'infrastructure')
+  const infraGroups = usage.filter(countsAsUnassignedProviderCash)
   const infraRows = infraGroups.reduce((total, group) => total + group.rows, 0)
   const unassignedInfrastructure = totalsByCurrency(infraGroups.map(group => ({ currency: group.currency, rows: group.rows, units: group.providerUnits })))
   const cursorRows = usage.filter(group => !group.assigned && group.provider === 'cursor').reduce((total, group) => total + group.rows, 0)
