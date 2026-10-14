@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { prisma } from '@/lib/db'
+import { importSchema, normalize } from './normalize'
+import { MANUAL_SPLIT_MARKER, splitBigint } from './split-units'
 import { importUsage } from './service'
 
 // Exercise import/revision decisions with a transaction double. Live Postgres migration
@@ -76,6 +78,56 @@ test('import replay, correction, enrichment, manual attribution and collision ho
     assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).at(-1).evidence.coveredByProviderInvoice,false)
 
   } finally { prisma.$transaction=original }
+})
+
+test('a manual equal split survives replay and a correction is divided again', async () => {
+  const events: any[] = [], revisions: any[] = []
+  const tx = {
+    $executeRaw: async () => 1,
+    costProjectMapping: { findMany: async () => [] },
+    costUsageEvent: {
+      findMany: async () => events.map(event => ({ ...event, revisions: revisions.filter(revision => revision.eventId === event.id).sort((a, b) => b.revision - a.revision).slice(0, 1) })),
+      createMany: async ({ data }: any) => { events.push(...data); return { count: data.length } },
+      update: async ({ where, data }: any) => { const event = events.find(item => item.id === where.id); Object.assign(event, data); event.occurredAt = new Date(event.occurredAt); return event },
+    },
+    costUsageRevision: { createMany: async ({ data }: any) => { revisions.push(...data); return { count: data.length } } },
+    costImportRun: { create: async ({ data }: any) => ({ id: 'run', ...data }) },
+    auditLog: { create: async () => ({}) },
+  }
+  const original = prisma.$transaction
+  ;(prisma as any).$transaction = async (fn: any) => fn(tx)
+  const event = { timestamp: '2026-09-26T10:00:00Z', model: 'test-model', conversationId: 'conversation', kind: 'USAGE_EVENT_KIND_USAGE_BASED', chargedCents: '100', isTokenBasedCall: true, tokenUsage: { totalCents: '100' } }
+  const payload = { provider: 'cursor' as const, accountRef: 'test-account', quality: 'complete' as const, events: [event] }
+  const latest = (id: string) => revisions.filter(revision => revision.eventId === id).sort((a, b) => b.revision - a.revision)[0]
+  try {
+    await importUsage(payload)
+    const anchor = events[0]
+    const fullNominal = latest(anchor.id).nominalUnits as bigint
+    const fullCash = latest(anchor.id).providerUnits as bigint
+    const projectA = 'project-a', projectB = 'project-b'
+    const nominalShares = splitBigint(fullNominal, [projectA, projectB])
+    const cashShares = splitBigint(fullCash, [projectA, projectB])
+    anchor.projectId = projectA
+    anchor.attribution = 'manual'
+    anchor.manualAssignment = true
+    latest(anchor.id).nominalUnits = nominalShares.get(projectA)
+    latest(anchor.id).providerUnits = cashShares.get(projectA)
+    const sibling = { ...anchor, id: 'sibling', sourceKey: `${anchor.sourceKey}${MANUAL_SPLIT_MARKER}${projectB}`, projectId: projectB }
+    events.push(sibling)
+    revisions.push({ ...latest(anchor.id), eventId: sibling.id, revision: 1, nominalUnits: nominalShares.get(projectB), providerUnits: cashShares.get(projectB) })
+    const before = revisions.length
+    const replay = await importUsage(payload)
+    assert.equal(replay.duplicate, 1)
+    assert.equal(revisions.length, before)
+    const corrected = { ...payload, events: [{ ...event, chargedCents: '200', tokenUsage: { totalCents: '200' } }] }
+    const revision = await importUsage(corrected)
+    assert.equal(revision.revised, 1)
+    const expected = normalize(importSchema.parse(corrected))[0]
+    assert.equal(latest(anchor.id).nominalUnits + latest(sibling.id).nominalUnits, expected.nominal)
+    assert.equal(latest(anchor.id).providerUnits + latest(sibling.id).providerUnits, expected.cash)
+    assert.notEqual(latest(anchor.id).nominalUnits, expected.nominal)
+    assert.equal(latest(sibling.id).evidence.manualSplitOf, anchor.sourceKey)
+  } finally { prisma.$transaction = original }
 })
 
 test('duplicate infrastructure sourceId and membership fail before any persistence', async () => {

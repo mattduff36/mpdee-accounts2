@@ -1,8 +1,9 @@
 'use client'
 import Link from 'next/link'
 import {usePathname} from 'next/navigation'
-const links=[['/costs','Overview'],['/costs/issues','Reconciliation issues'],['/costs/projects','Projects & connections'],['/costs/settings','Calculation setup'],['/costs/review','Review usage'],['/costs/analysis','Analysis & allocations'],['/costs/import','Import']]
+const links=[['/costs','Overview'],['/costs/period','Invoice period'],['/costs/issues','Reconciliation issues'],['/costs/projects','Projects & connections'],['/costs/settings','Calculation setup'],['/costs/review','Review usage'],['/costs/analysis','Analysis & allocations'],['/costs/import','Import']]
+const openToReaders=new Set(['/costs','/costs/issues','/costs/period'])
 export function CostsNav({writable}:{writable:boolean}) {
  const pathname=usePathname()
- return <nav aria-label="Project costs" className="mb-6 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1.5">{links.filter(([url])=>writable || url==='/costs' || url==='/costs/issues').map(([href,label])=>{ const current = href==='/costs' ? pathname==='/costs' : pathname===href || pathname.startsWith(href + '/'); return <Link key={href} href={href} aria-current={current?'page':undefined} className={`rounded-lg px-3 py-2.5 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-blue-500 ${current?'bg-blue-600 text-white':'text-slate-600 hover:bg-blue-50 hover:text-blue-800'}`}>{label}</Link>})}</nav>
+ return <nav aria-label="Project costs" className="mb-6 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1.5">{links.filter(([url])=>writable || openToReaders.has(url)).map(([href,label])=>{ const current = href==='/costs' ? pathname==='/costs' : pathname===href || pathname.startsWith(href + '/'); return <Link key={href} href={href} aria-current={current?'page':undefined} className={`rounded-lg px-3 py-2.5 text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-blue-500 ${current?'bg-blue-600 text-white':'text-slate-600 hover:bg-blue-50 hover:text-blue-800'}`}>{label}</Link>})}</nav>
 }

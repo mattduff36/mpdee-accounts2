@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { Upload } from "lucide-react"
 import { useRef, useState, type ChangeEvent } from "react"
 import {
@@ -15,6 +16,17 @@ import { parseInvoiceImportJson } from "@/lib/import-invoice-json"
 type ClientOption = {
   id: string
   name: string
+}
+
+function periodHref(clientId: string, issueDate: string) {
+  const params = new URLSearchParams()
+  if (clientId) params.set("client", clientId)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) {
+    params.set("from", `${issueDate.slice(0, 7)}-01`)
+    params.set("to", issueDate)
+  }
+  const query = params.toString()
+  return query ? `/costs/period?${query}` : "/costs/period"
 }
 
 function seedItems(initialItems?: InvoiceLineItemDraft[]) {
@@ -158,6 +170,11 @@ export function NewInvoiceForm({
                 </option>
               ))}
             </select>
+            <p className="mt-2 text-sm text-slate-600">
+              <Link className="text-blue-700 underline" href={periodHref(clientId, issueDate)}>
+                Usage costs for this client
+              </Link>
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms (days)</label>

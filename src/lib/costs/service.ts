@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { importSchema, normalize, retainTaskContext } from './normalize'
+import { MANUAL_SPLIT_MARKER, parentSourceKey, splitBigint } from './split-units'
 import { loadCalculationSettings } from './calculation-settings-load'
 import { dailyHostingFees, type DailyHostingFee } from './daily-hosting'
 import { chargeUnits, type Policy } from './money'
@@ -26,6 +27,25 @@ export async function importUsage(raw: unknown, userId?: string) {
       include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } },
     })
     const existingByKey = new Map(existingRows.map(e => [e.sourceKey,e]))
+    const manualKeys = existingRows.filter(event => event.manualAssignment).map(event => event.sourceKey)
+    const splitChildren = new Map<string, typeof existingRows>()
+    if (manualKeys.length) {
+      const children = await tx.costUsageEvent.findMany({
+        where: {
+          provider: input.provider,
+          accountRef: input.accountRef,
+          OR: manualKeys.map(sourceKey => ({ sourceKey: { startsWith: `${sourceKey}${MANUAL_SPLIT_MARKER}` } })),
+        },
+        include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } },
+      })
+      for (const child of children) {
+        const parentKey = parentSourceKey(child.sourceKey)
+        if (!parentKey) continue
+        const list = splitChildren.get(parentKey) ?? []
+        list.push(child)
+        splitChildren.set(parentKey, list)
+      }
+    }
     const newEvents: Prisma.CostUsageEventCreateManyInput[] = []
     const newRevisions: Prisma.CostUsageRevisionCreateManyInput[] = []
     for (const row of events) {
@@ -68,6 +88,34 @@ export async function importUsage(raw: unknown, userId?: string) {
       const quality = row.quality === 'review' ? 'review' : previous?.checksum === row.checksum && previous.quality === 'complete' ? 'complete' : row.quality
       if (previous?.checksum === row.checksum && (previous.fxGbp?.toString() ?? null) === (fx === null ? null : new Prisma.Decimal(fx).toString()) && previous.quality === quality) {
         duplicate++
+        continue
+      }
+      const siblings = splitChildren.get(row.sourceKey) ?? []
+      if (siblings.length) {
+        // A changed provider payload is divided again. An identical replay matches the stored checksum and stays a duplicate.
+        if (!existing || !existing.manualAssignment || !existing.projectId || siblings.some(sibling => !sibling.manualAssignment || !sibling.projectId)) throw new Error('Manual cost split is incomplete')
+        const projectIds = [existing.projectId, ...siblings.map(sibling => sibling.projectId!)]
+        const nominalShares = splitBigint(row.nominal, projectIds)
+        const cashShares = splitBigint(row.cash, projectIds)
+        const share = (id: string, shares: Map<string, bigint | null>) => {
+          if (!shares.has(id)) throw new Error('Manual cost split is missing a project share')
+          return shares.get(id) ?? null
+        }
+        newRevisions.push({
+          eventId: record.id, revision: (previous?.revision ?? 0) + 1, checksum: row.checksum,
+          funding: row.funding, nominalUnits: share(existing.projectId, nominalShares), providerUnits: share(existing.projectId, cashShares),
+          currency: row.currency, fxGbp: fx, quality, reason: row.reason,
+          evidence: row.evidence as Prisma.InputJsonValue,
+        })
+        for (const sibling of siblings) {
+          newRevisions.push({
+            eventId: sibling.id, revision: (sibling.revisions[0]?.revision ?? 0) + 1, checksum: row.checksum,
+            funding: row.funding, nominalUnits: share(sibling.projectId!, nominalShares), providerUnits: share(sibling.projectId!, cashShares),
+            currency: row.currency, fxGbp: fx, quality, reason: row.reason,
+            evidence: { ...row.evidence, manualSplitOf: row.sourceKey } as Prisma.InputJsonValue,
+          })
+        }
+        revised++
         continue
       }
       if (existing) revised++
