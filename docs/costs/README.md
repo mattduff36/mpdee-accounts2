@@ -18,6 +18,7 @@ The cost module remains a review ledger: it does not automatically create accoun
 ## What is implemented
 
 - `/costs`: account-wide monthly ledger, project filter, GBP-first nominal value/provider cost/client estimate, dated FX provenance, source coverage and held counts.
+- `/costs/subscriptions`: authenticated, read-only view of the latest 50 `CostSubscriptionInvoice` records, available to read-only users from the costs navigation. Shows confirmed native gross/net/tax, invoice/payment dates, exclusive-end service periods, allocation status and explicitly estimated GBP with stored FX provenance. Invoices remain visible without usage and are not added to usage/project totals, client charges or accounting expenses.
 - `/costs/projects`: projects linked to existing clients, client default policies, project overrides, effective dates, exact workspace/conversation/provider-resource mappings.
 - `/costs/review`: manual attribution with a recorded reason. Reimports preserve manual decisions.
 - `/costs/import`: authenticated JSON import. `/api/costs/ingest` also accepts a dedicated bearer token. `/api/costs/export` produces a review JSON export.
