@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { requireAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { formatCurrency, formatDateISO } from '@/lib/format'
+import { previewDevelopmentAllocation } from '@/lib/costs/development-allocation-preview'
 import { panel } from '../ui'
 
 export const dynamic = 'force-dynamic'
@@ -46,7 +47,16 @@ export default async function SubscriptionCostsPage() {
       <p className="mt-2 text-sm text-slate-600">Confirmed subscription invoices will appear here once imported, even if no matching usage has been collected. No subscription cost has been assumed.</p>
     </div> : <>
       <p className="text-sm text-slate-600">Showing {invoices.length} recorded {invoices.length === 1 ? 'invoice' : 'invoices'}, newest invoice date first. This view is limited to the latest {recordLimit} records.{records.length > recordLimit && ' Older invoices are not displayed.'}</p>
-      <div className="space-y-4">{invoices.map(invoice => <article key={invoice.id} className={panel}>
+      <div className="space-y-4">{invoices.map(invoice => {
+        const preview = previewDevelopmentAllocation({
+          scope: {
+            provider: invoice.provider, accountRef: invoice.accountRef, currency: invoice.currency,
+            periodStart: invoice.periodStart.toISOString().slice(0, 10),
+            periodEnd: invoice.periodEnd.toISOString().slice(0, 10),
+          },
+          grossMinor: invoice.grossMinor,
+        })
+        return <article key={invoice.id} className={panel}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="break-words text-lg font-semibold text-slate-900">{invoice.provider} / {invoice.invoiceNumber}</h2>
@@ -67,7 +77,14 @@ export default async function SubscriptionCostsPage() {
           <p className="mt-1 text-slate-600">Reference conversion: 1 {invoice.currency} = {invoice.fxRate.toString()} GBP, dated {formatDateISO(invoice.fxDate)}. Not an actual settlement rate.</p>
           <p className="mt-1 break-words text-xs text-slate-500">FX source: {invoice.fxSource}</p>
         </div>
-      </article>)}</div>
+        <div className="mt-4 rounded-xl border border-slate-200 p-4 text-sm">
+          <h3 className="font-semibold text-slate-900">Development allocation: {preview.label}</h3>
+          <p className="mt-1 text-slate-600">{preview.reason}</p>
+          <p className="mt-1 text-slate-600">Unallocated native gross: {preview.currency} {(preview.unallocatedMinor / 100).toFixed(2)}. ChatGPT stays wholly unallocated pending owner review. No automatic evidence selection or apply action is enabled.</p>
+          <p className="mt-2 text-xs text-slate-500">Policy: {preview.version}. Separate from legacy Cursor allocation; never included in project costs or charges.</p>
+        </div>
+      </article>
+      })}</div>
     </>}
   </div>
 }
