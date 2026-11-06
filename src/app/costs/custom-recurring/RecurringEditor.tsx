@@ -41,14 +41,18 @@ export function RecurringEditor({ projects, record }: Props) {
           ...fields,
         }),
       })
-      const result: { error?: string; status?: string } = await response.json()
+      const result: { error?: string; status?: string; id?: string } = await response.json()
       if (!response.ok) {
         setMessage(result.error ?? 'Nothing saved. Try again.')
         if (response.status === 409) setConflicted(true)
         return
       }
       setMessage(result.status === 'duplicate' ? 'Already saved; existing Accounts values retained.' : 'Saved recurring commitment. No payment or charge recorded.')
-      if (!record) { form.reset(); sourceKey.current = null }
+      if (!record && result.id) {
+        form.reset()
+        sourceKey.current = null
+        router.push(`/costs/custom-recurring?sourceId=${encodeURIComponent(result.id)}`)
+      }
       router.refresh()
     } catch {
       setMessage('Save could not be confirmed. Retry the unchanged form to safely check the same source key.')

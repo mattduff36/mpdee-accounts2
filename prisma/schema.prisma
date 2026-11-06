@@ -467,6 +467,7 @@ model CostSubscriptionInvoice {
   allocationStatus String @default("unallocated")
   evidence Json
   createdAt DateTime @default(now())
+  manualAllocation CostManualAllocation?
   @@unique([provider, accountRef, invoiceNumber])
   @@index([periodStart, periodEnd])
 }
@@ -506,6 +507,7 @@ model CostCustomRecurring {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   history           CostCustomRecurringRevision[]
+  manualAllocation  CostManualAllocation?
 
   @@index([projectId, active])
 }
@@ -541,6 +543,45 @@ model CostProject {
   legacyCharges CostLegacyCharge[]
   chargeSnapshots CostChargeSnapshot[]
   customRecurringCosts CostCustomRecurring[]
+  manualAllocationShares CostManualAllocationShare[]
+}
+
+// Separate user-selected settings; source imports and financial totals are unchanged.
+model CostManualAllocation {
+  id                    String @id @default(cuid())
+  sourceKind            String
+  sourceId              String
+  subscriptionInvoiceId String? @unique
+  subscriptionInvoice   CostSubscriptionInvoice? @relation(fields: [subscriptionInvoiceId], references: [id], onDelete: Restrict)
+  recurringId           String? @unique
+  recurring             CostCustomRecurring? @relation(fields: [recurringId], references: [id], onDelete: Restrict)
+  revision              Int
+  history               CostManualAllocationRevision[]
+  @@unique([sourceKind, sourceId])
+}
+
+model CostManualAllocationRevision {
+  id             String @id @default(cuid())
+  allocationId   String
+  allocation     CostManualAllocation @relation(fields: [allocationId], references: [id], onDelete: Restrict)
+  revision       Int
+  version        String
+  actorId        String
+  basis          String @default("user_selected")
+  unallocatedBps Int
+  createdAt      DateTime @default(now())
+  shares         CostManualAllocationShare[]
+  @@unique([allocationId, revision])
+}
+
+model CostManualAllocationShare {
+  id         String @id @default(cuid())
+  revisionId String
+  revision   CostManualAllocationRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  projectId  String
+  project    CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  shareBps   Int
+  @@unique([revisionId, projectId])
 }
 
 // Reviewed, frozen legacy client balances. Never provider cash or accounting expenses.

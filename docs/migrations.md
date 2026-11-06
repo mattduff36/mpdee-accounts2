@@ -62,6 +62,14 @@ When an explicit drop is approved: snapshot (Neon backup or `pg_dump` of the lef
 
 ## Local development
 
+### Manual cost allocations
+
+`20261106220000_manual_cost_allocations` adds isolated allocation settings, audited
+revisions and project shares, with restrictive source/project foreign keys. It does not
+backfill or alter source invoices, recurring commitments, expenses or client charges.
+Apply only through a separately authorized deployment. See
+[manual allocation contracts](costs-manual-allocations.md).
+
 ### Provider observations
 
 `20261106210000_provider_observations` adds only the isolated `CostProviderObservation`
