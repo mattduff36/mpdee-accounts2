@@ -12,6 +12,8 @@ export function middleware(request: NextRequest) {
   }
   // This read-only route verifies either its bearer token or the normal signed session.
   if (pathname === "/api/costs/development" && request.method === "GET") return NextResponse.next()
+  // Each custom-recurring handler authenticates before reading or writing.
+  if (pathname === "/api/costs/custom-recurring" && ["GET", "POST", "PATCH"].includes(request.method)) return NextResponse.next()
   const session = request.cookies.get("session")
   if (!session?.value) return NextResponse.redirect(new URL("/login", request.url))
   return NextResponse.next()

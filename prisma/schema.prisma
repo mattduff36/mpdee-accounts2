@@ -471,6 +471,43 @@ model CostSubscriptionInvoice {
   @@index([periodStart, periodEnd])
 }
 
+// Owner-entered commitments only; never payment evidence or client charges.
+model CostCustomRecurring {
+  id                String @id @default(cuid())
+  sourceKey         String @unique
+  importChecksum    String
+  projectId         String
+  project           CostProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider          String
+  name              String
+  currency          String
+  amountMinor       Int
+  recurrence        String @default("monthly")
+  effectiveStart    DateTime @db.Date
+  effectiveEnd      DateTime? @db.Date
+  active            Boolean @default(true)
+  notes             String?
+  revision          Int @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  history           CostCustomRecurringRevision[]
+
+  @@index([projectId, active])
+}
+
+model CostCustomRecurringRevision {
+  id                String @id @default(cuid())
+  recurringId       String
+  recurring         CostCustomRecurring @relation(fields: [recurringId], references: [id], onDelete: Restrict)
+  revision          Int
+  actorType         String
+  actorId           String?
+  snapshot          Json
+  createdAt         DateTime @default(now())
+
+  @@unique([recurringId, revision])
+}
+
 model CostProject {
   id        String @id @default(cuid())
   slug      String @unique
@@ -488,6 +525,7 @@ model CostProject {
   events    CostUsageEvent[]
   legacyCharges CostLegacyCharge[]
   chargeSnapshots CostChargeSnapshot[]
+  customRecurringCosts CostCustomRecurring[]
 }
 
 // Reviewed, frozen legacy client balances. Never provider cash or accounting expenses.
