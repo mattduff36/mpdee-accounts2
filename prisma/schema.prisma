@@ -444,6 +444,33 @@ model ReminderLog {
 
 // Source amounts are integer 1/10,000,000 native-currency units, never rounded per request.
 // Accounting documents continue to store GBP integer pence.
+// Provider subscription invoices are evidence records, not accounting expenses
+// or usage events. No project allocation is inferred from an invoice.
+model CostSubscriptionInvoice {
+  id String @id @default(cuid())
+  provider String
+  accountRef String
+  invoiceNumber String
+  checksum String
+  currency String
+  netMinor Int
+  taxMinor Int
+  grossMinor Int
+  invoiceDate DateTime @db.Date
+  paymentDate DateTime @db.Date
+  periodStart DateTime @db.Date
+  periodEnd DateTime @db.Date
+  gbpEstimatePence Int
+  fxRate Decimal @db.Decimal(30, 16)
+  fxDate DateTime @db.Date
+  fxSource String
+  allocationStatus String @default("unallocated")
+  evidence Json
+  createdAt DateTime @default(now())
+  @@unique([provider, accountRef, invoiceNumber])
+  @@index([periodStart, periodEnd])
+}
+
 model CostProject {
   id        String @id @default(cuid())
   slug      String @unique
