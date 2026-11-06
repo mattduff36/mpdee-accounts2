@@ -3,6 +3,7 @@ import type { CalculationRates } from './calculation-settings'
 import { COMPARISON_POLICY } from './comparison-policy'
 import { chargeUnits, UNIT, unitsText, type Policy } from './money'
 import { resolvePolicy, type DatedPolicy } from './service'
+import { isDevelopmentProvider } from './providers'
 
 export { isConfirmedProviderCash, isFreeCredit } from './charge-eligibility'
 
@@ -128,6 +129,7 @@ export function sourceEligibilityFor(policies: DatedPolicy[], projectId: string 
 export function groupSourceUsage(rows: Omit<UsageGroup, 'rows'>[]): UsageGroup[] {
   const grouped = new Map<string, UsageGroup>()
   for (const row of rows) {
+    if (isDevelopmentProvider(row.provider)) continue
     const key = [
       row.slug, row.name, row.provider, row.funding, row.currency, row.quality, String(row.assigned), row.model ?? '',
       row.sourceKey, String(row.coveredByProviderInvoice), row.nominalUnits?.toString() ?? '', row.providerUnits?.toString() ?? '',
@@ -157,6 +159,7 @@ export function summariseProjects(
     return current
   }
   for (const group of groups) {
+    if (isDevelopmentProvider(group.provider)) continue
     const row = figure(group)
     if (group.provider === 'cursor') addAmount(row.usage, group.currency, group.nominalUnits, group.rows)
     if (isFreeCredit(group.funding)) addAmount(row.freeCredit, group.currency, group.providerUnits, group.rows)

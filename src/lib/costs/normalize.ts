@@ -3,6 +3,25 @@ import { z } from 'zod'
 import { decimalUnits, UNIT } from './money'
 const amount = z.union([z.number().finite(), z.string().regex(/^-?\d+(\.\d+)?$/)]).nullable().optional()
 const token = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable().optional()
+const developmentRef = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/)
+export const developmentMetadata = z.object({
+  recordClass: z.enum(['provider-daily-aggregate', 'task-measurement']),
+  workItemId: developmentRef.nullable(),
+  parentChatId: developmentRef.nullable(),
+  taskId: developmentRef.nullable(),
+  attempt: z.number().int().positive().max(1_000_000).nullable(),
+  observedAt: z.string().max(40).datetime({ offset: true })
+    .refine(value => Number.isFinite(new Date(value).getTime()), 'Invalid source observation time')
+    .transform(value => new Date(value).toISOString()),
+  coverage: z.enum(['complete', 'partial', 'unknown']),
+  funding: z.enum(['unknown', 'paid', 'grant', 'subscription']).default('unknown'),
+}).strict().superRefine((metadata, context) => {
+  if (metadata.recordClass === 'task-measurement') {
+    for (const key of ['workItemId', 'parentChatId', 'taskId', 'attempt'] as const) {
+      if (metadata[key] === null) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: 'Task measurements require task lineage' })
+    }
+  }
+})
 const eventSchema = z.object({
   timestamp: z.union([z.string(), z.number()]), model: z.string().max(120).optional(),
   conversationId: z.string().max(160).nullable().optional(), workspaceRef: z.string().max(500).nullable().optional(),
@@ -13,14 +32,21 @@ const eventSchema = z.object({
   nominalAmount: amount, billedAmount: amount, currency: z.enum(['USD','GBP','EUR']).optional(),
   description: z.string().max(300).optional(),
   coveredByProviderInvoice: z.boolean().optional(),
+  development: developmentMetadata.optional(),
   taskContext: z.object({ method: z.literal('local-topic-rules-v1'), topics: z.array(z.enum(['Interface and usability','Costs and accounting','Database work','Authentication and access','Deployment and infrastructure','Testing and debugging','Scheduling and resources'])).max(3) }).strict().optional(),
 })
 export const importSchema = z.object({
-  version: z.literal('mpdee-costs-v1').optional(), provider: z.enum(['cursor','vercel','supabase','manual']).default('cursor'),
+  version: z.literal('mpdee-costs-v1').optional(), provider: z.enum(['cursor','vercel','supabase','manual','openai','codex']).default('cursor'),
   accountRef: z.string().min(3).max(100).regex(/^[a-zA-Z0-9_-]+$/),
   quality: z.enum(['complete','partial','unknown']).default('unknown'),
   fxGbp: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
   events: z.array(eventSchema).max(5000),
+}).superRefine((input, context) => {
+  if (input.provider !== 'openai' && input.provider !== 'codex') return
+  input.events.forEach((event, index) => {
+    if (!event.sourceId || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,249}$/.test(event.sourceId)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['events', index, 'sourceId'], message: 'Development imports require a stable sourceId (up to 250 identifier characters)' })
+    if (!event.development) context.addIssue({ code: z.ZodIssueCode.custom, path: ['events', index, 'development'], message: 'Development imports require evidence metadata' })
+  })
 })
 export type ImportPayload = z.infer<typeof importSchema>
 export type Normalized = ReturnType<typeof normalize>[number]
@@ -37,7 +63,9 @@ export function cursorBaseKey(event: { timestamp: string | number; model?: strin
 const INCLUDED_CURSOR_KINDS = new Set(['USAGE_EVENT_KIND_INCLUDED_IN_ULTRA', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO', 'USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS'])
 export function normalize(input: ImportPayload) {
   if (input.fxGbp && (Number(input.fxGbp) <= 0 || Number(input.fxGbp) > 100)) throw new Error('Invalid GBP exchange rate')
-  if (input.provider !== 'cursor') rejectInfrastructureBatch(input.events)
+  const development = input.provider === 'openai' || input.provider === 'codex'
+  if (development) rejectDevelopmentBatch(input.events)
+  else if (input.provider !== 'cursor') rejectInfrastructureBatch(input.events)
   const counts = new Map<string, number>()
   const parsed = input.events.map(event => {
     const rawTime = String(event.timestamp)
@@ -71,6 +99,11 @@ export function normalize(input: ImportPayload) {
         const display = decimalUnits(event.usageBasedCosts!.replace('$',''))
         if ((cash > display ? cash - display : display - cash) > UNIT / BigInt(100)) reason = 'Displayed and precise provider cost differ by more than one cent'
       }
+    } else if (development) {
+      funding = event.development!.funding
+      nominal = event.nominalAmount == null ? null : decimalUnits(event.nominalAmount)
+      cash = event.billedAmount == null ? null : decimalUnits(event.billedAmount)
+      reason = 'Development evidence only; client charging held for review'
     } else {
       cash = event.billedAmount == null ? null : decimalUnits(event.billedAmount)
       nominal = event.nominalAmount == null ? cash : decimalUnits(event.nominalAmount)
@@ -82,6 +115,16 @@ export function normalize(input: ImportPayload) {
     const checksum = revisionChecksum({ funding, nominal, cash, currency, occurredAt, evidence, reason })
     return { sourceKey, occurredAt, model: event.model ?? null, conversationId: event.conversationId ?? null, workspaceRef: event.workspaceRef ?? null, resourceRef: event.resourceRef ?? null, funding, nominal, cash, currency, fxGbp, evidence, checksum, quality: reason ? 'review' : input.quality, reason }
   })
+}
+
+function rejectDevelopmentBatch(events: ImportPayload['events']) {
+  const seen = new Set<string>()
+  for (const event of events) {
+    if (!event.sourceId?.trim()) throw new Error('Development imports require a stable sourceId')
+    if (!event.development) throw new Error('Development imports require evidence metadata')
+    if (seen.has(event.sourceId)) throw new Error('Repeated development sourceId in the same batch')
+    seen.add(event.sourceId)
+  }
 }
 
 /** Same stable infrastructure sourceId twice in one batch, or a synthetic membership id, never reaches a write. */
@@ -100,9 +143,13 @@ function revisionChecksum(row: { funding: string; nominal: bigint | null; cash: 
   const event = row.evidence
   const payload: Record<string, unknown> = { funding: row.funding, nominal: row.nominal?.toString(), cash: row.cash?.toString(), currency: row.currency, occurredAt: row.occurredAt, model: event.model, description: event.description, taskContext: event.taskContext, reason: row.reason, tokens: event.tokenUsage && [event.tokenUsage.inputTokens,event.tokenUsage.outputTokens,event.tokenUsage.cacheReadTokens,event.tokenUsage.cacheWriteTokens] }
   if (event.coveredByProviderInvoice !== undefined) payload.coveredByProviderInvoice = event.coveredByProviderInvoice
+  if (event.development) {
+    const metadata = event.development
+    payload.development = [metadata.recordClass, metadata.workItemId, metadata.parentChatId, metadata.taskId, metadata.attempt, metadata.observedAt, metadata.coverage, metadata.funding]
+  }
   return hash(JSON.stringify(payload))
 }
-// Older outbox payloads must not erase local context or reviewed invoice coverage.
+// Older outbox payloads must not erase validated metadata or reviewed invoice coverage.
 // Preserve only validated fields. An explicit coverage boolean remains a reviewable correction.
 export function retainTaskContext(row: Normalized, priorEvidence: unknown) {
   if (!priorEvidence || typeof priorEvidence !== 'object' || Array.isArray(priorEvidence)) return
@@ -115,6 +162,10 @@ export function retainTaskContext(row: Normalized, priorEvidence: unknown) {
   if (row.evidence.coveredByProviderInvoice === undefined && typeof prior.coveredByProviderInvoice === 'boolean') {
     row.evidence.coveredByProviderInvoice = prior.coveredByProviderInvoice
     enriched = true
+  }
+  if (!row.evidence.development) {
+    const parsed = developmentMetadata.safeParse(prior.development)
+    if (parsed.success && parsed.data) { row.evidence.development = parsed.data; enriched = true }
   }
   if (enriched) row.checksum = revisionChecksum(row)
 }

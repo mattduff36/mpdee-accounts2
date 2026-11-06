@@ -8,6 +8,8 @@ import { currentApprovedTotals, groupSourceUsage, sourceEligibilityFor, summaris
 import type { CalculationRates } from './calculation-settings'
 import { firstInclusiveUtcDate, storedClockToIso } from './provisional-estimate'
 import { type DatedPolicy } from './service'
+import { Prisma } from '@prisma/client'
+import { DEVELOPMENT_PROVIDERS, legacyProviderFilter } from './providers'
 
 type GroupRow = {
   slug: string
@@ -43,7 +45,8 @@ export async function loadCostFigures(): Promise<CostSummary> {
       FROM "CostUsageEvent" e
       LEFT JOIN "CostProject" p ON p.id = e."projectId"
       JOIN LATERAL (SELECT * FROM "CostUsageRevision" WHERE "eventId" = e.id ORDER BY revision DESC LIMIT 1) r ON true
-      WHERE e."occurredAt" >= ${start} AND e."occurredAt" <= ${asOf}`,
+      WHERE e.provider NOT IN (${Prisma.join(DEVELOPMENT_PROVIDERS)})
+        AND e."occurredAt" >= ${start} AND e."occurredAt" <= ${asOf}`,
     prisma.costChargeSnapshot.findMany({
       where: { verificationStatus: 'approved' },
       select: { id: true, projectId: true, replacesSnapshotId: true, clientChargePence: true },
@@ -52,7 +55,7 @@ export async function loadCostFigures(): Promise<CostSummary> {
       where: { isArchived: false, date: { gte: start }, OR: [{ supplier: { contains: 'cursor', mode: 'insensitive' } }, { supplier: { contains: 'vercel', mode: 'insensitive' } }, { supplier: { contains: 'supabase', mode: 'insensitive' } }] },
       select: { grossAmount: true, costAllocations: { select: { project: { select: { slug: true } }, amountPence: true } } },
     }),
-    prisma.costUsageRevision.count({ where: { fxGbp: { not: null }, event: { occurredAt: { gte: start, lte: asOf } } } }),
+    prisma.costUsageRevision.count({ where: { fxGbp: { not: null }, event: { provider: legacyProviderFilter(), occurredAt: { gte: start, lte: asOf } } } }),
     prisma.$queryRaw<{ reference: string | null; gross_pence: number; booked: string; notes: string | null }[]>`
       SELECT COALESCE(reference, 'No reference') AS reference, "grossAmount" AS gross_pence,
         to_char(date, 'YYYY-MM-DD HH24:MI:SS') AS booked, notes

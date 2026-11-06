@@ -8,6 +8,7 @@ import { prisma } from '@/lib/db'
 import { resolvePolicy, type DatedPolicy } from './service'
 import { combineGbp, mergeMoney, summarisePeriodUsage, type AmountSlice, type GbpCoverage, type PeriodProjectTotal } from './period-usage'
 import type { MoneyTotal } from './figures'
+import { legacyProviderFilter } from './providers'
 
 const EVENT_CAP = 20000
 
@@ -54,11 +55,11 @@ export async function loadClientPeriod(input: { clientId: string; from: string; 
   const selected = input.projectId ? projects.filter(project => project.id === input.projectId) : projects
   if (input.projectId && !selected.length) return { error: 'That project is not linked to this client.' }
   const ids = selected.map(project => project.id)
-  const count = ids.length ? await prisma.costUsageEvent.count({ where: { projectId: { in: ids }, occurredAt: { gte: input.start, lt: input.endExclusive } } }) : 0
+  const count = ids.length ? await prisma.costUsageEvent.count({ where: { provider: legacyProviderFilter(), projectId: { in: ids }, occurredAt: { gte: input.start, lt: input.endExclusive } } }) : 0
   if (count > EVENT_CAP) return { error: `This period has ${count.toLocaleString('en-GB')} assigned events. Shorten the dates so the total stays complete.` }
   const [events, policies, settings] = await Promise.all([
     ids.length ? prisma.costUsageEvent.findMany({
-      where: { projectId: { in: ids }, occurredAt: { gte: input.start, lt: input.endExclusive } },
+      where: { provider: legacyProviderFilter(), projectId: { in: ids }, occurredAt: { gte: input.start, lt: input.endExclusive } },
       include: { revisions: { orderBy: { revision: 'desc' }, take: 1, select: { funding: true, quality: true, currency: true, nominalUnits: true, providerUnits: true, fxGbp: true, evidence: true, reason: true } } },
     }) : Promise.resolve([]),
     prisma.costPolicy.findMany(),

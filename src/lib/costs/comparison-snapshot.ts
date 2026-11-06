@@ -7,6 +7,7 @@ import { quoteFor, type FxQuote } from './fx-values'
 import { ALLOCATION_METHOD, COMPARISON_POLICY, COMPARISON_POLICY_VERSION, LEDGER_START, policyInventory, type StoredPolicyRecord } from './comparison-policy'
 import { eventViews, outstandingBalance, type MoneyEvent, type SettlementDocuments } from './four-views'
 import { allocateSubscriptionExpense, type AllocationEvent } from './subscription-allocation'
+import { isDevelopmentProvider } from './providers'
 
 export type ComparisonEvent = MoneyEvent & {
   provider: string
@@ -95,7 +96,7 @@ export function projectComparison(input: {
   const asOfTime = input.asOf.getTime()
   const events = input.events.filter(event => {
     const time = event.occurredAt.getTime()
-    return time >= fromTime && time <= asOfTime
+    return !isDevelopmentProvider(event.provider) && time >= fromTime && time <= asOfTime
   }).sort((a, b) => a.id.localeCompare(b.id))
   const defaultPolicy = pricedComparisonPolicy(input.rates)
   const datedPolicies = input.storedPolicies === null ? null : datedStoredPolicies(input.storedPolicies, input.project)

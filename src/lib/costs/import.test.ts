@@ -77,6 +77,33 @@ test('import replay, correction, enrichment, manual attribution and collision ho
     assert.equal(r.revised,1,'new context may enrich without losing invoice coverage')
     assert.equal(revisions.filter(r=>r.eventId===coveredRecord.id).at(-1).evidence.coveredByProviderInvoice,false)
 
+    // Development evidence remains held even with a mapped project and complete input.
+    for (const provider of ['openai', 'codex']) {
+      const developmentEvent = {
+        timestamp: event.timestamp, sourceId: `${provider}:task-1:attempt-1`, workspaceRef: 'workspace-one',
+        nominalAmount: '2.50', billedAmount: '1.00',
+        development: {
+          recordClass: 'task-measurement', workItemId: 'work-1', parentChatId: 'chat-1', taskId: 'task-1',
+          attempt: 1, observedAt: '2026-11-02T00:00:00.000Z', coverage: 'complete', funding: 'paid',
+        },
+      }
+      const developmentPayload = { provider, accountRef: 'development-test', quality: 'complete', events: [developmentEvent] }
+      r = await importUsage(developmentPayload)
+      assert.equal(r.added, 1)
+      const record = events.find(e => e.sourceKey === `${developmentEvent.sourceId}:0`)
+      assert.equal(record.projectId, 'project-one')
+      const revision = revisions.filter(r => r.eventId === record.id).at(-1)
+      assert.equal(revision.quality, 'review')
+      assert.match(revision.reason, /client charging held/)
+      r = await importUsage(developmentPayload)
+      assert.equal(r.duplicate, 1)
+      r = await importUsage({ ...developmentPayload, events: [{
+        ...developmentEvent, development: { ...developmentEvent.development, coverage: 'partial' },
+      }] })
+      assert.equal(r.revised, 1)
+      assert.equal(revisions.filter(r => r.eventId === record.id).at(-1).quality, 'review')
+    }
+
   } finally { prisma.$transaction=original }
 })
 

@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/db'
+import { Prisma } from '@prisma/client'
+import { DEVELOPMENT_PROVIDERS } from './providers'
 import { loadCalculationSettings } from './calculation-settings-load'
 import { LEDGER_START } from './comparison-policy'
 import { dailyHostingFees } from './daily-hosting'
@@ -102,7 +104,8 @@ export async function loadProjectComparisonEstimate(slug: string): Promise<Loade
       JOIN LATERAL (
         SELECT * FROM "CostUsageRevision" WHERE "eventId" = e.id ORDER BY revision DESC LIMIT 1
       ) r ON true
-      WHERE p.slug = ${slug} AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00' AND e."occurredAt" <= ${asOfDate}`,
+      WHERE e.provider NOT IN (${Prisma.join(DEVELOPMENT_PROVIDERS)})
+        AND p.slug = ${slug} AND e."occurredAt" >= TIMESTAMP '2026-08-13 23:00:00' AND e."occurredAt" <= ${asOfDate}`,
     prisma.$queryRaw<PolicyRow[]>`
       SELECT CASE WHEN pol."projectId" IS NULL THEN 'client' ELSE 'project' END AS scope,
         to_char(pol."effectiveAt", 'YYYY-MM-DD HH24:MI:SS') AS effective_at,

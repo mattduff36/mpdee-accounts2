@@ -1,5 +1,6 @@
 import { chargeUnits, gbpPence, type Policy } from './money'
 import { COMPARISON_POLICY } from './comparison-policy'
+import { isDevelopmentProvider } from './providers'
 
 export type MoneyEvent = {
   id: string
@@ -35,6 +36,7 @@ function blocked(event: MoneyEvent): string | null {
 
 /** Usage value, provider cost and client charge stay independent. A held client charge does not blank a known source amount. */
 export function eventViews(event: MoneyEvent, policy: Policy = COMPARISON_POLICY): EventViews {
+  if (isDevelopmentProvider(event.provider)) return { usageValue: null, providerCost: null, clientCharge: null, clientChargePence: null, includedCashIsNotSubscription: false, reason: 'Development evidence is excluded from financial totals' }
   const includedCashIsNotSubscription = event.provider === 'cursor' && event.funding === 'included' && event.providerUnits === BigInt(0)
   const hold = blocked(event)
   const usageValue = event.provider === 'cursor' ? event.nominalUnits : null

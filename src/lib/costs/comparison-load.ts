@@ -8,6 +8,7 @@ import { referenceYears, type FxQuote } from './fx-values'
 import type { SettlementDocuments } from './four-views'
 import { firstInclusiveUtcDate } from './provisional-estimate'
 import type { AllocationEvent } from './subscription-allocation'
+import { legacyProviderFilter } from './providers'
 
 function storedPolicy(policy: { id: string; scopeKey: string; effectiveAt: Date; effectiveUntil: Date | null; billable: boolean; includedBaseBps: number; markupBps: number; infrastructureMarkupBps: number; vercelDailyPence: number }, projectSlug: string | null): StoredPolicyRecord {
   return { id: policy.id, scopeKey: policy.scopeKey, projectSlug, effectiveAt: policy.effectiveAt.toISOString(), effectiveUntil: policy.effectiveUntil?.toISOString() ?? null, billable: policy.billable, includedBaseBps: policy.includedBaseBps, markupBps: policy.markupBps, infrastructureMarkupBps: policy.infrastructureMarkupBps, vercelDailyPence: policy.vercelDailyPence }
@@ -33,12 +34,12 @@ export async function loadProjectComparison(slug: string, from: string, subscrip
   const asOf = new Date()
   const occurredAt = { gte: new Date(from), lte: asOf }
   const [projectEvents, settings] = await Promise.all([
-    prisma.costUsageEvent.findMany({ where: { projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }),
+    prisma.costUsageEvent.findMany({ where: { provider: legacyProviderFilter(), projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }),
     loadCalculationSettings(),
   ])
   if (projectEvents.length > 50000) throw new Error('Complete project history exceeds comparison limit')
   const accounts = Array.from(new Map(projectEvents.map(event => [`${event.provider}:${event.accountRef}`, { provider: event.provider, accountRef: event.accountRef }])).values())
-  const unassigned = accounts.length ? await prisma.costUsageEvent.findMany({ where: { projectId: null, occurredAt, OR: accounts }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }) : []
+  const unassigned = accounts.length ? await prisma.costUsageEvent.findMany({ where: { provider: legacyProviderFilter(), projectId: null, occurredAt, OR: accounts }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: 50001 }) : []
   if (unassigned.length > 50000) throw new Error('Unassigned history exceeds comparison limit')
   const allocationRows = subscriptionText === null || !accounts.length ? [] : await prisma.costUsageEvent.findMany({ where: { provider: 'cursor', occurredAt, OR: accounts.map(account => ({ provider: account.provider, accountRef: account.accountRef })) }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, take: 50001 })
   if (allocationRows.length > 50000) throw new Error('Subscription window exceeds comparison limit')

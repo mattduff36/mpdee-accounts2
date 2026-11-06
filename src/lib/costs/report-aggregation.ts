@@ -1,3 +1,5 @@
+import { isDevelopmentProvider } from './providers'
+
 export type CostReportRow = {
   date: string
   projectId: string | null
@@ -42,6 +44,7 @@ function hostingUnits(amountPence: number): bigint {
 }
 
 export function aggregateCostReport(rows: CostReportRow[], fees: CostReportFee[] = []) {
+  rows = rows.filter(row => !isDevelopmentProvider(row.provider))
   const daily = new Map<string, Daily>()
   const composition = new Map<string, bigint>()
   const chats = new Map<string, { date: string; projectId: string | null; projectName: string; conversationId: string; estimate: bigint; estimateKnown: number; cash: bigint; cashKnown: number; events: number; taskTopics: Set<string> }>()

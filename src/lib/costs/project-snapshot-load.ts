@@ -5,6 +5,7 @@ import { ledgerFx } from './fx'
 import { projectSnapshot, type ProjectSnapshotOptions } from './project-snapshot'
 import { firstInclusiveUtcDate } from './provisional-estimate'
 import { resolvePolicy, type DatedPolicy } from './service'
+import { isDevelopmentProvider, legacyProviderFilter } from './providers'
 
 const SNAPSHOT_EVENT_LIMIT = 50000
 
@@ -114,7 +115,7 @@ function occurredBy(asOf: Date) {
 }
 
 function includedSnapshotEvent(event: SnapshotEvent) {
-  return !isSyntheticMembershipSource(event.sourceKey) && !isExplicitProviderInvoiceCoverage(event.revisions[0]?.evidence)
+  return !isDevelopmentProvider(event.provider) && !isSyntheticMembershipSource(event.sourceKey) && !isExplicitProviderInvoiceCoverage(event.revisions[0]?.evidence)
 }
 
 /**
@@ -130,7 +131,7 @@ export async function loadProjectSnapshot(slug: string, options: { from: string 
   if (!project || project.archived) return { ok: false, status: 404, error: 'Project not found' }
   const occurredAt = from ? { gte: new Date(from), lte: asOf } : { lte: asOf }
   const [events, policies, settings] = await Promise.all([
-    db.costUsageEvent.findMany({ where: { projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: SNAPSHOT_EVENT_LIMIT + 1 }),
+    db.costUsageEvent.findMany({ where: { provider: legacyProviderFilter(), projectId: project.id, occurredAt }, include: { revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: { id: 'asc' }, take: SNAPSHOT_EVENT_LIMIT + 1 }),
     db.costPolicy.findMany({ where: { OR: [{ projectId: project.id }, ...(project.clientId ? [{ projectId: null, clientId: project.clientId }] : [])] } }),
     calculationSettings(deps),
   ])

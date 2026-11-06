@@ -10,6 +10,8 @@ export function middleware(request: NextRequest) {
   if (pathname.startsWith("/api/seed")) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
+  // This read-only route verifies either its bearer token or the normal signed session.
+  if (pathname === "/api/costs/development" && request.method === "GET") return NextResponse.next()
   const session = request.cookies.get("session")
   if (!session?.value) return NextResponse.redirect(new URL("/login", request.url))
   return NextResponse.next()

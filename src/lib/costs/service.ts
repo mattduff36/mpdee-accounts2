@@ -7,6 +7,7 @@ import { loadCalculationSettings } from './calculation-settings-load'
 import { dailyHostingFees, type DailyHostingFee } from './daily-hosting'
 import { chargeUnits, type Policy } from './money'
 import { coversDate } from './project-matrix'
+import { legacyProviderFilter } from './providers'
 
 // A single transaction lock serialises imports/mapping changes, including overlapping collectors.
 export async function costTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
@@ -154,7 +155,7 @@ export type LedgerHostingFee = DailyHostingFee & { projectName: string; projectS
 export async function ledger(month?: string, projectId?: string) {
   const range = monthRange(month)
   const [events, policies, projects, imports, settings] = await Promise.all([
-    prisma.costUsageEvent.findMany({ where: { occurredAt: { gte: range.start, lt: range.end }, ...(projectId === 'unassigned' ? { projectId: null } : projectId ? { projectId } : {}) },
+    prisma.costUsageEvent.findMany({ where: { provider: legacyProviderFilter(), occurredAt: { gte: range.start, lt: range.end }, ...(projectId === 'unassigned' ? { projectId: null } : projectId ? { projectId } : {}) },
       include: { project: true, revisions: { orderBy: { revision: 'desc' }, take: 1 } }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 50001 }),
     prisma.costPolicy.findMany(), prisma.costProject.findMany({ orderBy: { name: 'asc' }, include: { client: true } }),
     prisma.costImportRun.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),

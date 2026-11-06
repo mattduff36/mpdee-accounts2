@@ -1,9 +1,12 @@
+import { isDevelopmentProvider } from './providers'
+
 export function isFreeCredit(funding: string) {
   return funding === 'free-credit'
 }
 
 /** Funding label only. Quality, membership and invoice coverage are separate gates. */
 export function isConfirmedProviderCash(provider: string, funding: string) {
+  if (isDevelopmentProvider(provider)) return false
   if (isFreeCredit(funding) || funding === 'included' || funding === 'unknown') return false
   return (provider === 'cursor' && funding === 'on-demand') || funding === 'infrastructure'
 }

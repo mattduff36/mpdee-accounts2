@@ -1,4 +1,5 @@
 import { assertHostingPence, assertRateBps, DEFAULT_CALCULATION_RATES, type CalculationRates } from './calculation-settings'
+import { isDevelopmentProvider } from './providers'
 
 export const UNIT = BigInt(10_000_000)
 export function roundRatio(value: bigint, denominator: bigint): bigint {
@@ -49,6 +50,7 @@ function resolvedRates(policy: Policy): CalculationRates {
 }
 
 export function chargeUnits(input: { provider: string; funding: string; nominal: bigint | null; cash: bigint | null; model?: string | null }, policy: Policy): bigint | null {
+  if (isDevelopmentProvider(input.provider)) return null
   if (!policy.billable) return BigInt(0)
   if (input.funding === 'free' || input.funding === 'free-credit') return BigInt(0)
   if (input.funding === 'unknown') return null

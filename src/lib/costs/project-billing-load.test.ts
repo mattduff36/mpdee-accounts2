@@ -54,6 +54,8 @@ test('snapshot loader drops future events, synthetic membership, and explicit pr
         event('member', 'vercel:membership:2026-09-02', '2026-09-02T01:00:00.000Z', 'vercel', { resourceRef: 'same-host' }),
         event('covered-bool', 'cursor:use:bool', '2026-09-02T02:00:00.000Z', 'cursor', { coveredByProviderInvoice: true, resourceRef: 'same-host' }),
         event('covered-text', 'cursor:use:text', '2026-09-02T03:00:00.000Z', 'cursor', { coveredByProviderInvoice: 'true' }),
+        event('development-daily', 'openai:daily:0', '2026-09-02T03:30:00.000Z', 'openai'),
+        event('development-task', 'codex:task:0', '2026-09-02T03:40:00.000Z', 'codex'),
         event('future', 'supabase:db:1', '2026-10-11T00:00:00.000Z', 'supabase'),
       ] } },
       costPolicy: { findMany: async () => [policy] },

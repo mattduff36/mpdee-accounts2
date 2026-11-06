@@ -5,6 +5,7 @@ import { eventViews } from './four-views'
 import { quoteFor, type FxQuote } from './fx-values'
 import { coversDate } from './project-matrix'
 import { chargeUnits, decimalUnits, roundRatio, unitsText, UNIT, type Policy } from './money'
+import { isDevelopmentProvider } from './providers'
 
 export const COMPARISON_CHARGE_LABEL = 'Provisional iTrader costs'
 export const STORED_POLICY_LABEL = 'Stored policy client estimate'
@@ -357,6 +358,7 @@ export function provisionalComparisonEstimate(input: {
   const byIdentity = new Map<string, EstimateEvent>()
   let duplicateRevisions = 0
   for (const event of input.events) {
+    if (isDevelopmentProvider(event.provider)) continue
     const key = `${event.provider}:${event.accountRef}:${event.sourceKey}`
     const current = byIdentity.get(key)
     if (!current || event.revision > current.revision) {

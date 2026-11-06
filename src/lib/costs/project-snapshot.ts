@@ -3,6 +3,7 @@ import type { CalculationRates, HostingSchedule } from './calculation-settings'
 import { DAILY_HOSTING_LABEL, type DailyHostingFee } from './daily-hosting'
 import { CHARGE_RULE_VERSION, chargeUnits, decimalUnits, roundRatio, UNIT, type Policy } from './money'
 import type { FxQuote } from './fx-values'
+import { isDevelopmentProvider } from './providers'
 
 type SnapshotRow = {
   event: { id: string; provider: string; occurredAt: Date; model?: string | null }
@@ -58,6 +59,7 @@ function hostingFeeLines(project: string, from: string | null, fees: readonly Da
 }
 
 export function projectSnapshot(project: string, rows: SnapshotRow[], asOf: Date, imports: Date[] = [], from: string | null = null, options?: ProjectSnapshotOptions) {
+  rows = rows.filter(row => !isDevelopmentProvider(row.event.provider))
   const fees = options?.hostingFees ?? []
   if (rows.length > SNAPSHOT_LIMIT || rows.length + fees.length > SNAPSHOT_LIMIT) throw new Error('Project snapshot exceeds 50000 events')
   const groups = new Map<string, { date: string; category: ReturnType<typeof categoryFor>; funding: string; currency: string; held: boolean; rows: SnapshotRow[] }>()
@@ -107,4 +109,3 @@ export function projectSnapshot(project: string, rows: SnapshotRow[], asOf: Date
     : null
   return { version: 'mpdee-project-cost-snapshot-v2' as const, project, approvedSnapshot: false as const, asOf: asOf.toISOString(), revision: hash(calculation ? { ...proof, calculation } : proof), sourceUpdatedAt, coverage, lines }
 }
-
