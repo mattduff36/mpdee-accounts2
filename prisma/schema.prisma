@@ -471,6 +471,21 @@ model CostSubscriptionInvoice {
   @@index([periodStart, periodEnd])
 }
 
+// Provisional provider exports only; never accounting expenses, payments or client charges.
+model CostProviderObservation {
+  id         String   @id @default(cuid())
+  provider   String
+  accountRef String
+  sourceKey  String
+  checksum   String
+  payload    Json
+  observedAt DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([provider, accountRef, sourceKey, checksum], map: "CostProviderObservation_identity_checksum_key")
+  @@index([provider, accountRef, sourceKey, observedAt, createdAt], map: "CostProviderObservation_latest_idx")
+}
+
 // Owner-entered commitments only; never payment evidence or client charges.
 model CostCustomRecurring {
   id                String @id @default(cuid())

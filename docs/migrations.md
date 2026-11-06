@@ -62,6 +62,15 @@ When an explicit drop is approved: snapshot (Neon backup or `pg_dump` of the lef
 
 ## Local development
 
+### Provider observations
+
+`20261106210000_provider_observations` adds only the isolated `CostProviderObservation`
+snapshot table and its dedupe/latest-selection indexes. It does not backfill data or
+change legacy cost, allocation, expense or payment tables. Apply only through a
+separately authorized migration deployment; feature implementation does not apply it.
+See [provider observation contracts](costs-provider-observations.md) for import and
+non-additive reporting semantics. Existing application code can ignore this table.
+
 - New schema: edit `prisma/schema.prisma`, then `npm run db:migrate` (`prisma migrate dev`).
 - Default to expand-only SQL. Rename or drop is a separate CRITICAL change.
 - `npm run build` does **not** apply migrations.

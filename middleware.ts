@@ -14,6 +14,8 @@ export function middleware(request: NextRequest) {
   if (pathname === "/api/costs/development" && request.method === "GET") return NextResponse.next()
   // Each custom-recurring handler authenticates before reading or writing.
   if (pathname === "/api/costs/custom-recurring" && ["GET", "POST", "PATCH"].includes(request.method)) return NextResponse.next()
+  // The observation handlers authenticate both machine and session requests.
+  if (pathname === "/api/costs/provider-observations" && ["GET", "POST"].includes(request.method)) return NextResponse.next()
   const session = request.cookies.get("session")
   if (!session?.value) return NextResponse.redirect(new URL("/login", request.url))
   return NextResponse.next()
