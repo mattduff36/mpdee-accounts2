@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db'
 import { customRecurringAdapter } from './custom-recurring-store'
 import { createCustomRecurring, editCustomRecurring, CustomRecurringError } from './custom-recurring'
 import { persistManualAllocation, manualAllocationInclude, stateFromAllocation, recurringGbpEstimate } from './manual-allocation-store'
-import { dashboardSettingsSchema, emptySettings, dashboardPeriod, presetSchema, monthlyProjection, days, expectedTotal } from './dashboard-model'
+import { dashboardSettingsSchema, emptySettings, dashboardPeriod, presetSchema, monthlyProjection, days, expectedTotal, defaultCategoryName, forecastFx } from './dashboard-model'
 import { loadDevelopmentReport } from './development-load'
 import { decimalUnits, roundRatio, UNIT } from './money'
 
@@ -19,7 +19,7 @@ const command = z.discriminatedUnion('operation',[
 ])
 const hash = (s:string)=>createHash('sha256').update(s).digest('hex').slice(0,24)
 const date = (d:Date)=>d.toISOString().slice(0,10)
-const categoryId = (provider:string)=>'provider-'+hash(provider.toLowerCase())
+const categoryId = (provider:string)=>'provider-'+hash(defaultCategoryName(provider).toLowerCase())
 export async function saveDashboard(raw:unknown, actor:{actorType:'machine';actorId:null}|{actorType:'user';actorId:string}) {
   const input=command.parse(raw)
   if(input.operation==='allocation') return persistManualAllocation(input.record,actor.actorId??'machine:mpdee-worker-dashboard')
@@ -57,7 +57,7 @@ export async function saveDashboard(raw:unknown, actor:{actorType:'machine';acto
     const custom=await tx.costCustomRecurring.findMany({select:{provider:true},distinct:['provider']})
     for(const {provider} of [...providers,...custom]) {
       const id=categoryId(provider)
-      if(!settings.categories.some(c=>c.id===id))settings.categories.push({id,name:provider})
+      if(!settings.categories.some(c=>c.id===id))settings.categories.push({id,name:defaultCategoryName(provider)})
     }
     const data=dashboardSettingsSchema.parse(settings), revision=(row?.revision??0)+1
     await tx.costDashboardSettings.upsert({where:{id:'global'},create:{id:'global',data,revision},update:{data,revision}})
@@ -73,14 +73,14 @@ export async function loadDashboard(preset: z.infer<typeof presetSchema>, now=ne
     prisma.costSubscriptionInvoice.findMany({take:5001,orderBy:{invoiceDate:'desc'},include:{manualAllocation:{include:manualAllocationInclude}}}),
     prisma.costCustomRecurring.findMany({take:5001,include:{manualAllocation:{include:manualAllocationInclude}}}),
     prisma.costProject.findMany({where:{archived:false},select:{id:true,name:true},orderBy:{name:'asc'},take:5001}),
-    prisma.costFxRate.findMany({where:{date:{gte:new Date(Date.parse(period.from)-7*86400000),lte:now}}}),
+    prisma.costFxRate.findMany({where:{date:{lte:now}},orderBy:{date:'desc'},take:5000}),
     loadDevelopmentReport({from:period.from,to:period.to,groupBy:'month'}),
   ])
   if([invoices,custom,projects].some(rows=>rows.length>5000)) throw new CustomRecurringError(400,'Cost source limit exceeded; use Accounts to review this period')
   const settings=dashboardSettingsSchema.parse(row?.data??emptySettings)
   const categories=[...settings.categories]
-  const ensure=(provider:string)=>{const id=categoryId(provider);if(!categories.some(c=>c.id===id))categories.push({id,name:provider});return id}
-  const quotes=fx.map(r=>({currency:r.currency,date:date(r.date),rate:r.gbpRate.toString(),source:r.source}))
+  const ensure=(provider:string)=>{const legacy='provider-'+hash(provider.toLowerCase());if(categories.some(c=>c.id===legacy))return legacy;const id=categoryId(provider);if(!categories.some(c=>c.id===id))categories.push({id,name:defaultCategoryName(provider)});return id}
+  const quotes=[...fx.map(r=>({currency:r.currency,date:date(r.date),rate:r.gbpRate.toString(),source:r.source})),...invoices.map(r=>({currency:r.currency,date:date(r.fxDate),rate:r.fxRate.toString(),source:r.fxSource}))]
   const convert=(amount:number,currency:string,day:string)=>amount===0?0:recurringGbpEstimate(amount,currency,day,quotes).gbpEstimatePence
   const sources: {key:string;id:string;kind:string;name:string;provider:string;categoryId:string;currency:string;amountMinor:number;confirmed:number|null;projected:number|null;basis:string;allocation:ReturnType<typeof stateFromAllocation>;custom?:unknown}[]=[]
   const groups=new Map<string,typeof invoices>()
@@ -92,7 +92,8 @@ export async function loadDashboard(preset: z.infer<typeof presetSchema>, now=ne
     const billed=group.filter(x=>date(x.invoiceDate)>=period.from&&date(x.invoiceDate)<period.to)
     const confirmed=billed.reduce((sum,x)=>sum+x.gbpEstimatePence,0)
     const cycle=days(date(latest.periodStart),date(latest.periodEnd))
-    const estimate=cycle>0 ? Math.round(latest.gbpEstimatePence*days(period.from,period.to)/cycle) : null
+    const firstService=group.map(x=>date(x.periodStart)).sort()[0]
+    const estimate=cycle>0 ? Math.round(latest.gbpEstimatePence*Math.max(0,days([period.from,firstService].sort().at(-1)!,period.to))/cycle) : null
     sources.push({key,id:latest.id,kind:'subscription_invoice',name:latest.provider+' subscription',provider:latest.provider,categoryId:settings.assignments[key]??ensure(latest.provider),currency:latest.currency,amountMinor:latest.grossMinor,confirmed,projected:expectedTotal(confirmed,estimate),basis:'Forecast uses the latest bill and its service-period daily rate. Confirmed is grouped by invoice date.',allocation:stateFromAllocation(latest.manualAllocation)})
     // Each invoice remains individually assignable, including older bills in this period.
   }
@@ -101,8 +102,11 @@ export async function loadDashboard(preset: z.infer<typeof presetSchema>, now=ne
     const values=bills.map(b=>convert(b.amountMinor,b.currency,b.date))
     const confirmed=values.some(x=>x===null)?null:values.reduce<number>((sum,x)=>sum+(x??0),0)
     const original=cost.active ? monthlyProjection(cost.amountMinor,date(cost.effectiveStart),cost.effectiveEnd?date(cost.effectiveEnd):null,period.from,period.to):0
-    const projected=convert(original,cost.currency,period.today<period.to?period.today:new Date(Date.parse(period.to)-86400000).toISOString().slice(0,10))
-    sources.push({key,id:cost.id,kind:'custom_recurring',name:cost.name,provider:cost.provider,categoryId:settings.assignments[key]??ensure(cost.provider),currency:cost.currency,amountMinor:cost.amountMinor,confirmed,projected:confirmed===null?null:expectedTotal(confirmed,projected),basis:'Monthly commitment, prorated for active dates. Only recorded bills count as Confirmed. Foreign currency forecasts use available reference FX.',allocation:stateFromAllocation(cost.manualAllocation,cost.projectId),custom:{...cost,manualAllocation:undefined,effectiveStart:date(cost.effectiveStart),effectiveEnd:cost.effectiveEnd?date(cost.effectiveEnd):null}})
+    const asOf=period.today<period.to?period.today:new Date(Date.parse(period.to)-86400000).toISOString().slice(0,10)
+    // Forecasts may hold a historical reference rate constant. Billed evidence retains the stricter dated FX rule.
+    const {reference,pence:projected}=forecastFx(original,cost.currency,asOf,quotes)
+    const fxNote=cost.currency==='GBP'?'':reference?` Forecast reference FX: ${reference.date}; held constant, not a current bank quote.`:' Reference FX is missing.'
+    sources.push({key,id:cost.id,kind:'custom_recurring',name:cost.name,provider:cost.provider,categoryId:settings.assignments[key]??ensure(cost.provider),currency:cost.currency,amountMinor:cost.amountMinor,confirmed,projected:confirmed===null?null:expectedTotal(confirmed,projected),basis:'Current monthly commitment, prorated for active dates. Only recorded bills count as Confirmed.'+fxNote,allocation:stateFromAllocation(cost.manualAllocation,cost.projectId),custom:{...cost,manualAllocation:undefined,effectiveStart:date(cost.effectiveStart),effectiveEnd:cost.effectiveEnd?date(cost.effectiveEnd):null}})
   }
   // Usage is separate evidence: never add task estimates or nominal grant value to billed subscriptions.
   const usage=report.providerDailyAggregates.totals.map(r=>({provider:r.provider,currency:r.currency,reported:r.reportedValue.amount,cash:r.evidencedCash.amount,coverage:r.coverage,records:r.records}))
@@ -119,7 +123,7 @@ export async function loadDashboard(preset: z.infer<typeof presetSchema>, now=ne
     const costs=sources.filter(s=>s.categoryId===c.id)
     const total=(field:'confirmed'|'projected')=>costs.some(s=>s[field]===null)?null:costs.reduce((sum,s)=>sum+(s[field]??0),0)
     return {...c,confirmed:total('confirmed'),projected:total('projected'),count:costs.length}
-  })
+  }).filter(c=>c.count>0||!c.id.startsWith('provider-'))
   return {version:'mpdee-cost-dashboard-v1',revision:row?.revision??0,period,categories:cards,sources,projects,usage,
     invoices:invoices.filter(x=>date(x.invoiceDate)>=period.from&&date(x.invoiceDate)<period.to).map(x=>({id:x.id,name:x.provider+' / '+x.invoiceNumber,kind:'subscription_invoice',allocation:stateFromAllocation(x.manualAllocation)})),
     bills:settings.bills,notice:'Confirmed means billed, not proof of payment. Projected is the full expected period total, including Confirmed. GBP conversions are estimates. Usage and task measurements are kept separate to avoid counting the same cost twice.'}

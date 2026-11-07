@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { developmentPeriod } from './development-report'
+import { decimalUnits, roundRatio } from './money'
+import type { FxQuote } from './fx-values'
 
 const id = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/)
 const name = z.string().trim().min(1).max(80).regex(/^[^\x00-\x1f\x7f]+$/)
@@ -35,3 +37,14 @@ export function monthlyProjection(amount:number,start:string,end:string|null,fro
   return Math.round(result)
 }
 export function expectedTotal(confirmed:number,estimate:number|null) { return estimate===null ? null : Math.max(confirmed,estimate) }
+export function defaultCategoryName(provider:string) {
+  if(/^(imagekit|cloudinary)$/i.test(provider))return 'Image hosting'
+  if(/^(openai|codex|copilot|cursor|anthropic)$/i.test(provider))return 'AI tools'
+  if(/^(vercel|neon|supabase)$/i.test(provider))return 'Hosting'
+  return provider
+}
+export function forecastFx(amount:number,currency:string,asOf:string,quotes:FxQuote[]) {
+  const reference=quotes.filter(q=>q.currency===currency&&q.date<=asOf).sort((a,b)=>b.date.localeCompare(a.date))[0]??null
+  const pence=amount===0?0:currency==='GBP'?amount:reference?Number(roundRatio(BigInt(amount)*decimalUnits(reference.rate,8),BigInt(100000000))):null
+  return {reference,pence}
+}
