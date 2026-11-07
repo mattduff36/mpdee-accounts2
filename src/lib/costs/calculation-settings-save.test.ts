@@ -396,7 +396,7 @@ test('settings actions and pages keep the write guard ahead of mutations and hid
   assert.match(nav, /Projects & connections/)
   assert.match(nav, /Calculation setup/)
   const readerRoutes = nav.match(/const openToReaders=new Set\(\[([^\]]+)\]\)/)?.[1].match(/'([^']+)'/g)?.map(route => route.slice(1, -1))
-  assert.deepEqual(readerRoutes?.sort(), ['/costs','/costs/development','/costs/issues','/costs/period','/costs/subscriptions'].sort())
+  assert.deepEqual(readerRoutes?.sort(), ['/costs','/costs/custom-recurring','/costs/development','/costs/issues','/costs/manual-allocations','/costs/period','/costs/provider-observations','/costs/subscriptions'].sort())
   assert.match(nav, /writable \|\| openToReaders\.has\(url\)/)
   assert.doesNotMatch(save, /@\/lib\/db|prisma/)
   assert.match(save, /export async function saveGlobalCalculationSettings/)

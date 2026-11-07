@@ -35,7 +35,7 @@ function databaseFields(record: CustomRecurringFields) {
     effectiveEnd: record.effectiveEnd ? new Date(record.effectiveEnd) : null,
   }
 }
-function adapter(tx: Prisma.TransactionClient, actor: CustomRecurringActor): CustomRecurringStore {
+export function customRecurringAdapter(tx: Prisma.TransactionClient, actor: CustomRecurringActor): CustomRecurringStore {
   async function projectExists(projectId: string) {
     if (!await tx.costProject.findUnique({ where: { id: projectId }, select: { id: true } })) {
       throw new CustomRecurringError(400, 'Choose an existing cost project')
@@ -75,7 +75,7 @@ export async function saveCustomRecurring(raw: unknown, actor: CustomRecurringAc
   return prisma.$transaction(async tx => {
     // Separate from legacy cost locks; serializes concurrent imports of the same source.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(739201683)`
-    const store = adapter(tx, actor)
+    const store = customRecurringAdapter(tx, actor)
     return mode === 'create' ? createCustomRecurring(raw, store) : editCustomRecurring(raw, store)
   }, { timeout: 15000, maxWait: 10000 })
 }

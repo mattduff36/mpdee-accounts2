@@ -670,6 +670,13 @@ model CostPolicy {
 
 // Current calculation rates. One global row (id "global") plus optional per-project overrides.
 // Null project fields inherit the global rate. Zero is an explicit override. Not a dated CostPolicy.
+model CostDashboardSettings {
+  id String @id @default("global")
+  revision Int @default(0)
+  data Json
+  updatedAt DateTime @updatedAt
+}
+
 model CostCalculationSettings {
   id                      String   @id @default("global")
   includedPremiumBps      Int      @default(5000)
