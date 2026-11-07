@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { dashboardPeriod, monthlyProjection, expectedTotal, dashboardSettingsSchema } from './dashboard-model'
+import { dashboardPeriod, monthlyProjection, expectedTotal, dashboardSettingsSchema, defaultCategoryName, forecastFx } from './dashboard-model'
 import { middleware } from '../../../middleware'
 import { NextRequest } from 'next/server'
 
@@ -21,6 +21,17 @@ test('Projected includes Confirmed without adding it twice; missing estimates re
   assert.equal(expectedTotal(12000,15000),15000)
   assert.equal(expectedTotal(18000,15000),18000)
   assert.equal(expectedTotal(18000,null),null)
+})
+test('related providers share useful default categories',()=>{
+  assert.equal(defaultCategoryName('ImageKit'),defaultCategoryName('Cloudinary'))
+  assert.equal(defaultCategoryName('openai'),'AI tools')
+})
+test('forecasts use dated historical FX without borrowing future rates or treating missing conversion as zero',()=>{
+  const quotes=[{currency:'USD',date:'2026-10-16',rate:'0.7463',source:'reference'},{currency:'USD',date:'2026-12-01',rate:'0.9',source:'future'}]
+  assert.equal(forecastFx(900,'USD','2026-11-07',quotes).pence,672)
+  assert.equal(forecastFx(900,'USD','2026-10-01',quotes).pence,null)
+  assert.equal(forecastFx(0,'USD','2026-10-01',quotes).pence,0)
+  assert.equal(forecastFx(900,'GBP','2026-10-01',[]).pence,900)
 })
 test('category configuration rejects duplicate identities, dangling categories and invalid bill dates',()=>{
   const base={categories:[{id:'image',name:'Image hosting'}],assignments:{'custom:one':'image'},bills:[]}
