@@ -18,6 +18,8 @@ export function middleware(request: NextRequest) {
   if (pathname === "/api/costs/provider-observations" && ["GET", "POST"].includes(request.method)) return NextResponse.next()
   // Allocations allow token reads only; the handler requires a same-origin writer for saves.
   if (pathname === "/api/costs/manual-allocations" && ["GET", "POST"].includes(request.method)) return NextResponse.next()
+  // Dashboard handler verifies its scoped machine bearer or signed user session.
+  if (pathname === "/api/costs/dashboard" && ["GET", "POST"].includes(request.method)) return NextResponse.next()
   const session = request.cookies.get("session")
   if (!session?.value) return NextResponse.redirect(new URL("/login", request.url))
   return NextResponse.next()
